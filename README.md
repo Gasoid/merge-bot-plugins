@@ -20,7 +20,7 @@ To use the OpenAI plugin, set the following environment variables:
 ### Installation
 set env variables of merge-bot to use this plugin:
 ```bash
-export PLUGINS="https://github.com/Gasoid/merge-bot-plugins/blob/main/openai-reviewer/openai-reviewer.yaml"
+export PLUGINS="https://github.com/Gasoid/merge-bot-plugins/releases/download/latest/openai-reviewer.yaml"
 export REVIEWER_API_KEY="your_openai_api_key"
 ```
 

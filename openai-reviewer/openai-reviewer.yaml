@@ -22,6 +22,6 @@ vars:
 
 wasm_config:
   exported_function: "review"
-  url: "https://github.com/Gasoid/merge-bot/releases/download/v3.8.0-beta.1/openai-plugin.wasm"
+  url: "https://github.com/Gasoid/merge-bot-plugins/releases/download/latest/openai-plugin.wasm"
   allowed_hosts:
   - "api.openai.com"
