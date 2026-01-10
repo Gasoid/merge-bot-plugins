@@ -1,0 +1,4 @@
+*.wasm
+*.exe
+.DS_Store
+tests
