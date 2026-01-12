@@ -1,0 +1,27 @@
+name: OpenAI reviewer
+command: "!review"
+runtime: "wasm"
+
+vars:
+  - name: reviewer_api_key
+    type:
+    - env
+    - secret
+  - name: reviewer_endpoint
+    type:
+    - env
+    - secret
+  - name: reviewer_model # gpt-5.1-codex-mini is default
+    type:
+    - env
+    - config
+  - name: reviewer_prompt
+    type:
+    - env
+    - config
+
+wasm_config:
+  exported_function: "review"
+  url: "https://github.com/Gasoid/merge-bot-plugins/releases/download/latest/openai-plugin.wasm"
+  allowed_hosts:
+  - "api.openai.com"
