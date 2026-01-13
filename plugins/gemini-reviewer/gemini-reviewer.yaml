@@ -11,7 +11,7 @@ vars:
     type:
     - env
     - secret
-  - name: gemini_reviewer_model # gemini-pro is default
+  - name: gemini_reviewer_model # gemini-2.5-flash-lite is default
     type:
     - env
     - config
