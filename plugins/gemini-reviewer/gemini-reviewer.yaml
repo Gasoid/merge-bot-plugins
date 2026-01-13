@@ -22,6 +22,6 @@ vars:
 
 wasm_config:
   exported_function: "review"
-  url: "https://github.com/Gasoid/merge-bot-plugins/releases/download/v0.0.1/gemini-plugin.wasm"
+  url: "https://github.com/Gasoid/merge-bot-plugins/releases/download/v0.0.2/gemini-plugin.wasm"
   allowed_hosts:
   - "generativelanguage.googleapis.com"
