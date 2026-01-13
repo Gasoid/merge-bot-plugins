@@ -16,7 +16,7 @@ Focus on identifying potential bugs, security vulnerabilities, and areas where t
 Your feedback should be clear, concise, and directly related to the code in the diff.
 This is an automated review. You suggest what to fix/make better and user will fix issues in code.
 `
-	defaultModel    = "gemini-pro"
+	defaultModel    = "gemini-2.5-flash-lite"
 	defaultEndpoint = "https://generativelanguage.googleapis.com/v1beta/models/"
 )
 
