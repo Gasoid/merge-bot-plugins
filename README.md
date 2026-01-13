@@ -10,6 +10,7 @@ This repository contains the following plugins:
 
 -   **[OpenAI Reviewer](./plugins/openai-reviewer/README.md)**: A plugin that uses the OpenAI API to review merge requests.
 -   **[Gemini Reviewer](./plugins/gemini-reviewer/README.md)**: A plugin that uses the Google Gemini API to review merge requests.
+-   **[Claude Reviewer](./plugins/claude-reviewer/README.md)**: A plugin that uses the Anthropic Claude API to review merge requests.
 
 For more information about each plugin, please refer to their respective `README.md` files.
 
