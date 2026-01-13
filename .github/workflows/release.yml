@@ -37,6 +37,6 @@ jobs:
           body_path: release.txt
           files: |
             openai-plugin.wasm
-            openai-reviewer/openai-reviewer.yaml
+            plugins/openai-reviewer/openai-reviewer.yaml
             gemini-plugin.wasm
-            gemini-reviewer/gemini-reviewer.yaml
+            plugins/gemini-reviewer/gemini-reviewer.yaml
