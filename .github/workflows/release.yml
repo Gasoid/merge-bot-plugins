@@ -21,8 +21,11 @@ jobs:
           go-version: ^1.25
         id: go
 
-      - name: Build
-        run: GOOS="wasip1" GOARCH="wasm" go build -o openai-plugin.wasm -buildmode=c-shared openai-reviewer/main.go
+      - name: Build openai
+        run: GOOS="wasip1" GOARCH="wasm" go build -o openai-plugin.wasm -buildmode=c-shared plugins/openai-reviewer/main.go
+      
+      - name: Build gemini
+        run: GOOS="wasip1" GOARCH="wasm" go build -o gemini-plugin.wasm -buildmode=c-shared plugins/gemini-reviewer/main.go
       
       - run: go install github.com/git-chglog/git-chglog/cmd/git-chglog@latest
       - run: git-chglog -o release.txt ${{ github.ref_name }}
@@ -35,3 +38,5 @@ jobs:
           files: |
             openai-plugin.wasm
             openai-reviewer/openai-reviewer.yaml
+            gemini-plugin.wasm
+            gemini-reviewer/gemini-reviewer.yaml

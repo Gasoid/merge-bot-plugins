@@ -1,0 +1,27 @@
+name: Gemini reviewer
+command: "!review"
+runtime: "wasm"
+
+vars:
+  - name: gemini_reviewer_api_key
+    type:
+    - env
+    - secret
+  - name: gemini_reviewer_endpoint
+    type:
+    - env
+    - secret
+  - name: gemini_reviewer_model # gemini-pro is default
+    type:
+    - env
+    - config
+  - name: gemini_reviewer_prompt
+    type:
+    - env
+    - config
+
+wasm_config:
+  exported_function: "review"
+  url: "https://github.com/Gasoid/merge-bot-plugins/releases/download/v0.0.2/gemini-plugin.wasm"
+  allowed_hosts:
+  - "generativelanguage.googleapis.com"
