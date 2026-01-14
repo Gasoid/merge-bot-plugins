@@ -30,6 +30,6 @@ vars:
 
 wasm_config:
   exported_function: "review"
-  url: "https://github.com/Gasoid/merge-bot-plugins/releases/download/v0.0.3/claude-plugin.wasm"
+  url: "https://github.com/Gasoid/merge-bot-plugins/releases/download/v0.0.3-beta.1/claude-plugin.wasm"
   allowed_hosts:
   - "api.anthropic.com"
