@@ -1,0 +1,31 @@
+name: Deepseek Reviewer
+command: "!review"
+runtime: "wasm"
+
+vars:
+  - name: deepseek_reviewer_api_key
+    type:
+    - env
+    - secret
+  - name: deepseek_reviewer_endpoint
+    type:
+    - env
+    - secret
+  - name: deepseek_reviewer_model # deepseek-chat is default
+    type:
+    - env
+    - config
+  - name: deepseek_reviewer_prompt
+    type:
+    - env
+    - config
+  - name: deepseek_reviewer_max_tokens
+    type:
+    - env
+    - config
+
+wasm_config:
+  exported_function: "review"
+  url: "https://github.com/Gasoid/merge-bot-plugins/releases/download/v0.0.3-beta.2/deepseek-plugin.wasm"
+  allowed_hosts:
+  - "api.deepseek.com"
