@@ -18,11 +18,11 @@ Focus on identifying potential bugs, security vulnerabilities, and areas where t
 Your feedback should be clear, concise, and directly related to the code in the diff.
 This is an automated review. You suggest what to fix/make better and user will fix issues in code.
 
-You have access to a tool "get_git_file" to fetch the full content of any file from the repository if you need more context (e.g. surrounding code, type definitions, function implementations, or imported modules) to perform a thorough and accurate review.
+You have access to a tool "get_git_file" to fetch the full content of any file from the repository if you need more context (e.g. surrounding code, type definitions, function implementations, or imported modules) to perform a thorough and accurate review. Use this tool only when necessary, and provide your complete review as soon as you have gathered sufficient information.
 `
 	defaultModel          = "gemini-2.5-flash-lite"
 	defaultEndpoint       = "https://generativelanguage.googleapis.com/v1beta/models/"
-	defaultMaxTurns       = 5
+	defaultMaxTurns       = 8
 	defaultMaxRetries     = 5
 	defaultInitialBackoff = 2 * time.Second
 )
@@ -375,7 +375,10 @@ func review(initialPrompt, endpoint, apiKey, model, provider string, projectID, 
 	for turn := 0; turn < maxTurns; turn++ {
 		geminiReq := GeminiRequest{
 			Contents: contents,
-			Tools:    tools,
+		}
+		// On the final turn, omit tools to force the model to provide its final review comment
+		if turn < maxTurns-1 {
+			geminiReq.Tools = tools
 		}
 
 		b, err := json.Marshal(geminiReq)
@@ -447,6 +450,10 @@ func review(initialPrompt, endpoint, apiKey, model, provider string, projectID, 
 			Role:  "user",
 			Parts: functionResponseParts,
 		})
+	}
+
+	if latestText != "" {
+		return latestText, nil
 	}
 
 	return "", fmt.Errorf("agent reached max turns (%d) without completing review", maxTurns)
