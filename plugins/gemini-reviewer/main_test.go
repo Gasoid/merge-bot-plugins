@@ -264,3 +264,70 @@ func TestHandleUnknownFunctionCall(t *testing.T) {
 		t.Errorf("expected error in response, got %v", resp.Response)
 	}
 }
+
+func TestThoughtSignatureParsing(t *testing.T) {
+	// 1. camelCase thoughtSignature
+	camelJSON := `{
+		"functionCall": {
+			"name": "get_git_file",
+			"args": {"file_path": "main.go"}
+		},
+		"thoughtSignature": "test_sig_camel_123"
+	}`
+	var p1 Part
+	if err := json.Unmarshal([]byte(camelJSON), &p1); err != nil {
+		t.Fatalf("failed to unmarshal camelCase thoughtSignature: %v", err)
+	}
+	if p1.ThoughtSignature != "test_sig_camel_123" {
+		t.Errorf("expected 'test_sig_camel_123', got '%s'", p1.ThoughtSignature)
+	}
+
+	// 2. snake_case thought_signature
+	snakeJSON := `{
+		"functionCall": {
+			"name": "get_git_file",
+			"args": {"file_path": "main.go"}
+		},
+		"thought_signature": "test_sig_snake_456"
+	}`
+	var p2 Part
+	if err := json.Unmarshal([]byte(snakeJSON), &p2); err != nil {
+		t.Fatalf("failed to unmarshal snake_case thought_signature: %v", err)
+	}
+	if p2.ThoughtSignature != "test_sig_snake_456" {
+		t.Errorf("expected 'test_sig_snake_456', got '%s'", p2.ThoughtSignature)
+	}
+
+	// 3. thought part with text
+	thoughtJSON := `{
+		"thought": true,
+		"text": "Analyzing the diff...",
+		"thoughtSignature": "thought_sig_789"
+	}`
+	var p3 Part
+	if err := json.Unmarshal([]byte(thoughtJSON), &p3); err != nil {
+		t.Fatalf("failed to unmarshal thought part: %v", err)
+	}
+	if !p3.Thought {
+		t.Errorf("expected Thought=true, got false")
+	}
+	if p3.Text != "Analyzing the diff..." {
+		t.Errorf("expected text 'Analyzing the diff...', got '%s'", p3.Text)
+	}
+	if p3.ThoughtSignature != "thought_sig_789" {
+		t.Errorf("expected 'thought_sig_789', got '%s'", p3.ThoughtSignature)
+	}
+
+	// 4. Serialization roundtrip
+	out, err := json.Marshal(p1)
+	if err != nil {
+		t.Fatalf("failed to marshal part: %v", err)
+	}
+	var roundtrip map[string]interface{}
+	if err := json.Unmarshal(out, &roundtrip); err != nil {
+		t.Fatalf("failed to unmarshal roundtrip JSON: %v", err)
+	}
+	if roundtrip["thoughtSignature"] != "test_sig_camel_123" {
+		t.Errorf("expected 'test_sig_camel_123' in serialized JSON, got %v", roundtrip["thoughtSignature"])
+	}
+}

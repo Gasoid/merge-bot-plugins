@@ -23,6 +23,10 @@ vars:
     type:
     - env
     - config
+  - name: gemini_reviewer_max_retries # 5 is default
+    type:
+    - env
+    - config
 
 wasm_config:
   exported_function: "review"

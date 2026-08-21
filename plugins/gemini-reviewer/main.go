@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/extism/go-pdk"
 )
@@ -19,9 +20,11 @@ This is an automated review. You suggest what to fix/make better and user will f
 
 You have access to a tool "get_git_file" to fetch the full content of any file from the repository if you need more context (e.g. surrounding code, type definitions, function implementations, or imported modules) to perform a thorough and accurate review.
 `
-	defaultModel    = "gemini-2.5-flash-lite"
-	defaultEndpoint = "https://generativelanguage.googleapis.com/v1beta/models/"
-	defaultMaxTurns = 5
+	defaultModel          = "gemini-2.5-flash-lite"
+	defaultEndpoint       = "https://generativelanguage.googleapis.com/v1beta/models/"
+	defaultMaxTurns       = 5
+	defaultMaxRetries     = 5
+	defaultInitialBackoff = 2 * time.Second
 )
 
 type PluginInput struct {
@@ -110,6 +113,13 @@ func Review() int32 {
 		}
 	}
 
+	maxRetries := defaultMaxRetries
+	if v, ok := input.Vars["gemini_reviewer_max_retries"]; ok {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			maxRetries = n
+		}
+	}
+
 	description := ""
 	if input.Description != "" {
 		description = fmt.Sprintf("Description: %s\n", input.Description)
@@ -127,7 +137,7 @@ func Review() int32 {
 
 	fullPrompt := prompt + mr + description + "# Diff\n```\n" + string(input.Diffs) + "\n```\n"
 
-	result, err := review(fullPrompt, endpoint, apiKey, model, provider, input.ProjectID, input.ID, input.Branch, maxTurns)
+	result, err := review(fullPrompt, endpoint, apiKey, model, provider, input.ProjectID, input.ID, input.Branch, maxTurns, maxRetries)
 	if err != nil {
 		pdk.SetError(err)
 		return 1
@@ -175,8 +185,27 @@ type Content struct {
 
 type Part struct {
 	Text             string            `json:"text,omitempty"`
+	Thought          bool              `json:"thought,omitempty"`
+	ThoughtSignature string            `json:"thoughtSignature,omitempty"`
 	FunctionCall     *FunctionCall     `json:"functionCall,omitempty"`
 	FunctionResponse *FunctionResponse `json:"functionResponse,omitempty"`
+}
+
+func (p *Part) UnmarshalJSON(data []byte) error {
+	type Alias Part
+	aux := struct {
+		*Alias
+		ThoughtSignatureSnake string `json:"thought_signature,omitempty"`
+	}{
+		Alias: (*Alias)(p),
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	if p.ThoughtSignature == "" && aux.ThoughtSignatureSnake != "" {
+		p.ThoughtSignature = aux.ThoughtSignatureSnake
+	}
+	return nil
 }
 
 type FunctionCall struct {
@@ -291,7 +320,42 @@ func handleFunctionCall(fnCall *FunctionCall, provider string, projectID, mrID i
 	}
 }
 
-func review(initialPrompt, endpoint, apiKey, model, provider string, projectID, mrID int64, defaultBranch string, maxTurns int) (string, error) {
+func sendHTTPRequestWithRetry(url string, body []byte, maxRetries int) (pdk.HTTPResponse, error) {
+	var resp pdk.HTTPResponse
+	backoff := defaultInitialBackoff
+
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		req := pdk.NewHTTPRequest(pdk.MethodPost, url)
+		req.SetHeader("Content-Type", "application/json")
+		req.SetBody(body)
+
+		resp = req.Send()
+		status := resp.Status()
+
+		if status >= 200 && status < 300 {
+			return resp, nil
+		}
+
+		// Retriable statuses:
+		// 429: Too Many Requests (Rate limit)
+		// 500: Internal Server Error
+		// 502: Bad Gateway
+		// 503: Service Unavailable (Model high demand / overloaded)
+		// 504: Gateway Timeout
+		isRetriable := status == 429 || status == 500 || status == 502 || status == 503 || status == 504
+		if isRetriable && attempt < maxRetries {
+			time.Sleep(backoff)
+			backoff *= 2
+			continue
+		}
+
+		return resp, fmt.Errorf("request failed with status %d: %s", status, string(resp.Body()))
+	}
+
+	return resp, fmt.Errorf("request failed after %d retries: status %d", maxRetries, resp.Status())
+}
+
+func review(initialPrompt, endpoint, apiKey, model, provider string, projectID, mrID int64, defaultBranch string, maxTurns, maxRetries int) (string, error) {
 	url := fmt.Sprintf("%s%s:generateContent?key=%s", endpoint, model, apiKey)
 	tools := []Tool{getGitFileTool()}
 
@@ -319,13 +383,9 @@ func review(initialPrompt, endpoint, apiKey, model, provider string, projectID, 
 			return "", err
 		}
 
-		req := pdk.NewHTTPRequest(pdk.MethodPost, url)
-		req.SetHeader("Content-Type", "application/json")
-		req.SetBody(b)
-
-		resp := req.Send()
-		if resp.Status() < 200 || resp.Status() >= 300 {
-			return "", fmt.Errorf("request failed with status %d: %s", resp.Status(), string(resp.Body()))
+		resp, err := sendHTTPRequestWithRetry(url, b, maxRetries)
+		if err != nil {
+			return "", err
 		}
 
 		var geminiResp GeminiResponse
@@ -350,7 +410,7 @@ func review(initialPrompt, endpoint, apiKey, model, provider string, projectID, 
 			if p.FunctionCall != nil {
 				functionCalls = append(functionCalls, p.FunctionCall)
 			}
-			if p.Text != "" {
+			if p.Text != "" && !p.Thought {
 				textParts = append(textParts, p.Text)
 			}
 		}
