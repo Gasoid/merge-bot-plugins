@@ -25,15 +25,16 @@ You have access to a tool "get_git_file" to fetch the full content of any file f
 )
 
 type PluginInput struct {
-	Title       string            `json:"title"`
-	Description string            `json:"description"`
-	Author      string            `json:"author"`
-	ProjectID   int64             `json:"project_id"`
-	Branch      string            `json:"branch"`
-	ID          int64             `json:"mr_id"`
-	Provider    string            `json:"provider"`
-	Diffs       []byte            `json:"diffs"`
-	Vars        map[string]string `json:"vars"`
+	Title        string            `json:"title"`
+	Description  string            `json:"description"`
+	Author       string            `json:"author"`
+	ProjectID    int64             `json:"project_id"`
+	Branch       string            `json:"branch"`
+	TargetBranch string            `json:"target_branch"`
+	ID           int64             `json:"mr_id"`
+	Provider     string            `json:"provider"`
+	Diffs        []byte            `json:"diffs"`
+	Vars         map[string]string `json:"vars"`
 }
 
 type PluginOutput struct {
@@ -41,15 +42,17 @@ type PluginOutput struct {
 }
 
 //go:wasmimport extism:host/user get_git_file
-func host_get_git_file(providerPtr uint64, projectID int64, mrID int64, filePathPtr uint64) uint64
+func host_get_git_file(providerPtr uint64, projectID int64, mrID int64, branchPtr uint64, filePathPtr uint64) uint64
 
-func getGitFile(provider string, projectID int64, mrID int64, filePath string) ([]byte, error) {
+func getGitFile(provider string, projectID int64, mrID int64, branch string, filePath string) ([]byte, error) {
 	memProvider := pdk.AllocateString(provider)
 	defer memProvider.Free()
+	memBranch := pdk.AllocateString(branch)
+	defer memBranch.Free()
 	memFilePath := pdk.AllocateString(filePath)
 	defer memFilePath.Free()
 
-	resOffset := host_get_git_file(memProvider.Offset(), projectID, mrID, memFilePath.Offset())
+	resOffset := host_get_git_file(memProvider.Offset(), projectID, mrID, memBranch.Offset(), memFilePath.Offset())
 	if resOffset == 0 {
 		return nil, errors.New("file not found or host error")
 	}
@@ -112,16 +115,19 @@ func Review() int32 {
 		description = fmt.Sprintf("Description: %s\n", input.Description)
 	}
 
-	branch := ""
+	branchInfo := ""
 	if input.Branch != "" {
-		branch = fmt.Sprintf("Branch: %s\n", input.Branch)
+		branchInfo += fmt.Sprintf("Source Branch: %s\n", input.Branch)
+	}
+	if input.TargetBranch != "" {
+		branchInfo += fmt.Sprintf("Target Branch: %s\n", input.TargetBranch)
 	}
 
-	mr := fmt.Sprintf("\nTitle: %s\nAuthor: %s\n%s", input.Title, input.Author, branch)
+	mr := fmt.Sprintf("\nTitle: %s\nAuthor: %s\n%s", input.Title, input.Author, branchInfo)
 
 	fullPrompt := prompt + mr + description + "# Diff\n```\n" + string(input.Diffs) + "\n```\n"
 
-	result, err := review(fullPrompt, endpoint, apiKey, model, provider, input.ProjectID, input.ID, maxTurns)
+	result, err := review(fullPrompt, endpoint, apiKey, model, provider, input.ProjectID, input.ID, input.Branch, maxTurns)
 	if err != nil {
 		pdk.SetError(err)
 		return 1
@@ -196,13 +202,17 @@ func getGitFileTool() Tool {
 		FunctionDeclarations: []FunctionDeclaration{
 			{
 				Name:        "get_git_file",
-				Description: "Fetch the content of a file from the repository at the current merge request branch context. Use this whenever you need to see the full content of a file modified in the diff, imports, or referenced code for more context.",
+				Description: "Fetch the content of a file from the repository. By default, it fetches from the merge request source branch, but you can also specify the target branch to inspect the base version.",
 				Parameters: &Parameters{
 					Type: "OBJECT",
 					Properties: map[string]Property{
 						"file_path": {
 							Type:        "STRING",
 							Description: "The relative path to the file in the repository (e.g. 'pkg/server/server.go').",
+						},
+						"branch": {
+							Type:        "STRING",
+							Description: "Optional branch name to fetch the file from (e.g. source branch or target branch). If not specified, defaults to the merge request source branch.",
 						},
 					},
 					Required: []string{"file_path"},
@@ -228,7 +238,20 @@ func extractFilePath(args map[string]interface{}) string {
 	return ""
 }
 
-func handleFunctionCall(fnCall *FunctionCall, provider string, projectID, mrID int64) *FunctionResponse {
+func extractBranch(args map[string]interface{}, defaultBranch string) string {
+	if args == nil {
+		return defaultBranch
+	}
+	if v, ok := args["branch"].(string); ok && v != "" {
+		return v
+	}
+	if v, ok := args["ref"].(string); ok && v != "" {
+		return v
+	}
+	return defaultBranch
+}
+
+func handleFunctionCall(fnCall *FunctionCall, provider string, projectID, mrID int64, defaultBranch string) *FunctionResponse {
 	if fnCall.Name == "get_git_file" {
 		filePath := extractFilePath(fnCall.Args)
 		if filePath == "" {
@@ -240,12 +263,14 @@ func handleFunctionCall(fnCall *FunctionCall, provider string, projectID, mrID i
 			}
 		}
 
-		fileData, err := getGitFile(provider, projectID, mrID, filePath)
+		branch := extractBranch(fnCall.Args, defaultBranch)
+
+		fileData, err := getGitFile(provider, projectID, mrID, branch, filePath)
 		if err != nil {
 			return &FunctionResponse{
 				Name: fnCall.Name,
 				Response: map[string]interface{}{
-					"error": fmt.Sprintf("failed to get file %s: %s", filePath, err.Error()),
+					"error": fmt.Sprintf("failed to get file %s on branch %s: %s", filePath, branch, err.Error()),
 				},
 			}
 		}
@@ -266,7 +291,7 @@ func handleFunctionCall(fnCall *FunctionCall, provider string, projectID, mrID i
 	}
 }
 
-func review(initialPrompt, endpoint, apiKey, model, provider string, projectID, mrID int64, maxTurns int) (string, error) {
+func review(initialPrompt, endpoint, apiKey, model, provider string, projectID, mrID int64, defaultBranch string, maxTurns int) (string, error) {
 	url := fmt.Sprintf("%s%s:generateContent?key=%s", endpoint, model, apiKey)
 	tools := []Tool{getGitFileTool()}
 
@@ -351,7 +376,7 @@ func review(initialPrompt, endpoint, apiKey, model, provider string, projectID, 
 		// Execute function calls and collect function responses
 		var functionResponseParts []Part
 		for _, fnCall := range functionCalls {
-			fnResp := handleFunctionCall(fnCall, provider, projectID, mrID)
+			fnResp := handleFunctionCall(fnCall, provider, projectID, mrID, defaultBranch)
 			functionResponseParts = append(functionResponseParts, Part{
 				FunctionResponse: fnResp,
 			})
@@ -362,10 +387,6 @@ func review(initialPrompt, endpoint, apiKey, model, provider string, projectID, 
 			Role:  "function",
 			Parts: functionResponseParts,
 		})
-	}
-
-	if latestText != "" {
-		return latestText, nil
 	}
 
 	return "", fmt.Errorf("agent reached max turns (%d) without completing review", maxTurns)

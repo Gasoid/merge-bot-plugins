@@ -23,6 +23,10 @@ func TestGetGitFileTool(t *testing.T) {
 	if _, ok := decl.Parameters.Properties["file_path"]; !ok {
 		t.Errorf("expected 'file_path' property in declaration parameters")
 	}
+
+	if _, ok := decl.Parameters.Properties["branch"]; !ok {
+		t.Errorf("expected 'branch' property in declaration parameters")
+	}
 }
 
 func TestExtractFilePath(t *testing.T) {
@@ -68,6 +72,49 @@ func TestExtractFilePath(t *testing.T) {
 	}
 }
 
+func TestExtractBranch(t *testing.T) {
+	tests := []struct {
+		name          string
+		args          map[string]interface{}
+		defaultBranch string
+		expected      string
+	}{
+		{
+			name:          "nil args with default",
+			args:          nil,
+			defaultBranch: "feature-branch",
+			expected:      "feature-branch",
+		},
+		{
+			name:          "explicit branch key",
+			args:          map[string]interface{}{"branch": "main"},
+			defaultBranch: "feature-branch",
+			expected:      "main",
+		},
+		{
+			name:          "ref key fallback",
+			args:          map[string]interface{}{"ref": "master"},
+			defaultBranch: "feature-branch",
+			expected:      "master",
+		},
+		{
+			name:          "empty branch key uses default",
+			args:          map[string]interface{}{"branch": ""},
+			defaultBranch: "develop",
+			expected:      "develop",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractBranch(tt.args, tt.defaultBranch)
+			if got != tt.expected {
+				t.Errorf("extractBranch() = %v, want %v", got, tt.expected)
+			}
+		})
+	}
+}
+
 func TestGeminiRequestSerialization(t *testing.T) {
 	req := GeminiRequest{
 		Contents: []Content{
@@ -85,6 +132,7 @@ func TestGeminiRequestSerialization(t *testing.T) {
 							Name: "get_git_file",
 							Args: map[string]interface{}{
 								"file_path": "main.go",
+								"branch":    "main",
 							},
 						},
 					},
@@ -165,7 +213,8 @@ func TestGeminiResponseParsing(t *testing.T) {
 							"functionCall": {
 								"name": "get_git_file",
 								"args": {
-									"file_path": "pkg/handlers/provider.go"
+									"file_path": "pkg/handlers/provider.go",
+									"branch": "main"
 								}
 							}
 						}
@@ -193,6 +242,9 @@ func TestGeminiResponseParsing(t *testing.T) {
 	if extractFilePath(part.FunctionCall.Args) != "pkg/handlers/provider.go" {
 		t.Errorf("expected path 'pkg/handlers/provider.go', got '%v'", part.FunctionCall.Args)
 	}
+	if extractBranch(part.FunctionCall.Args, "feature") != "main" {
+		t.Errorf("expected branch 'main', got '%v'", part.FunctionCall.Args)
+	}
 }
 
 func TestHandleUnknownFunctionCall(t *testing.T) {
@@ -201,7 +253,7 @@ func TestHandleUnknownFunctionCall(t *testing.T) {
 		Args: map[string]interface{}{},
 	}
 
-	resp := handleFunctionCall(fnCall, "gitlab", 1, 1)
+	resp := handleFunctionCall(fnCall, "gitlab", 1, 1, "main")
 	if resp == nil {
 		t.Fatalf("expected response, got nil")
 	}
