@@ -8,8 +8,9 @@ The Gemini Reviewer is a WebAssembly (WASM) plugin that integrates with the merg
 
 ## Features
 
--   **Automated Code Reviews**: Analyzes diffs in merge requests and provides feedback.
--   **Configurable**: The plugin can be configured with different models, prompts, and endpoints.
+-   **Automated Code Reviews**: Analyzes diffs in merge requests and provides comprehensive feedback.
+-   **Autonomous Agent Loop & Tool Calling**: Gemini can request full file contents via the host function `get_git_file` if more context is needed beyond the diff.
+-   **Configurable**: The plugin can be configured with different models, prompts, endpoints, and agent turn limits.
 -   **Secure**: API keys are handled as secrets.
 
 ## Configuration
@@ -24,6 +25,16 @@ The following variables can be used to configure the plugin:
 | `gemini_reviewer_endpoint`   | The endpoint for the Gemini API.                                            | `env`, `secret` | https://generativelanguage.googleapis.com/v1beta/models/ |
 | `gemini_reviewer_model`      | The Gemini model to use for the review.                                     | `env`, `config` | `gemini-2.5-flash-lite`  |
 | `gemini_reviewer_prompt`     | A custom prompt to use for the review.                                      | `env`, `config` | (see code)    |
+| `gemini_reviewer_max_turns`  | Maximum tool-calling conversation turns in the agent loop.                  | `env`, `config` | `5`           |
+
+## Build
+
+To compile the plugin to WebAssembly:
+
+```bash
+cd plugins/gemini-reviewer
+GOOS="wasip1" GOARCH="wasm" go build -o ../../gemini-plugin.wasm -buildmode=c-shared main.go
+```
 
 ## Usage
 
