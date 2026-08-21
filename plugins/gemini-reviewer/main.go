@@ -384,7 +384,7 @@ func review(initialPrompt, endpoint, apiKey, model, provider string, projectID, 
 
 		// Append the function responses turn to conversation history
 		contents = append(contents, Content{
-			Role:  "function",
+			Role:  "user",
 			Parts: functionResponseParts,
 		})
 	}

@@ -139,7 +139,7 @@ func TestGeminiRequestSerialization(t *testing.T) {
 				},
 			},
 			{
-				Role: "function",
+				Role: "user",
 				Parts: []Part{
 					{
 						FunctionResponse: &FunctionResponse{
