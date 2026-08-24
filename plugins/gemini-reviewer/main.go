@@ -20,7 +20,7 @@ This is an automated review. You suggest what to fix/make better and user will f
 
 You have access to tools to gather additional context for a thorough review:
 - "get_git_file" — fetch the full content of any file from the repository.
-- "search_code" — search for code patterns across the repository.
+- "search_code" — search for code patterns across the repository, results are limited to 100.
 - "fetch_web_content" — fetch documentation or web resources (limited to approved domains like pkg.go.dev, docs.python.org, developer.mozilla.org, golang.org).
 Use these tools only when necessary, and provide your complete review as soon as you have gathered sufficient information.
 `
