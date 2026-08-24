@@ -18,7 +18,11 @@ Focus on identifying potential bugs, security vulnerabilities, and areas where t
 Your feedback should be clear, concise, and directly related to the code in the diff.
 This is an automated review. You suggest what to fix/make better and user will fix issues in code.
 
-You have access to a tool "get_git_file" to fetch the full content of any file from the repository if you need more context (e.g. surrounding code, type definitions, function implementations, or imported modules) to perform a thorough and accurate review. Use this tool only when necessary, and provide your complete review as soon as you have gathered sufficient information.
+You have access to tools to gather additional context for a thorough review:
+- "get_git_file" — fetch the full content of any file from the repository.
+- "search_code" — search for code patterns across the repository.
+- "fetch_web_content" — fetch documentation or web resources (limited to approved domains like pkg.go.dev, docs.python.org, developer.mozilla.org, golang.org).
+Use these tools only when necessary, and provide your complete review as soon as you have gathered sufficient information.
 `
 	defaultModel          = "gemini-2.5-flash-lite"
 	defaultEndpoint       = "https://generativelanguage.googleapis.com/v1beta/models/"
@@ -31,11 +35,8 @@ type PluginInput struct {
 	Title        string            `json:"title"`
 	Description  string            `json:"description"`
 	Author       string            `json:"author"`
-	ProjectID    int64             `json:"project_id"`
 	Branch       string            `json:"branch"`
 	TargetBranch string            `json:"target_branch"`
-	ID           int64             `json:"mr_id"`
-	Provider     string            `json:"provider"`
 	Diffs        []byte            `json:"diffs"`
 	Vars         map[string]string `json:"vars"`
 }
@@ -44,29 +45,119 @@ type PluginOutput struct {
 	Comment string `json:"comment"`
 }
 
-//go:wasmimport extism:host/user get_git_file
-func host_get_git_file(providerPtr uint64, projectID int64, mrID int64, branchPtr uint64, filePathPtr uint64) uint64
+type hostResult struct {
+	Error string `json:"error"`
+}
 
-func getGitFile(provider string, projectID int64, mrID int64, branch string, filePath string) ([]byte, error) {
-	memProvider := pdk.AllocateString(provider)
-	defer memProvider.Free()
-	memBranch := pdk.AllocateString(branch)
-	defer memBranch.Free()
-	memFilePath := pdk.AllocateString(filePath)
-	defer memFilePath.Free()
+type getGitFileResult struct {
+	hostResult
+	Data []byte `json:"data"`
+}
 
-	resOffset := host_get_git_file(memProvider.Offset(), projectID, mrID, memBranch.Offset(), memFilePath.Offset())
+type searchCodeResult struct {
+	hostResult
+	Results []searchResult `json:"results"`
+}
+
+type searchResult struct {
+	FilePath string `json:"file_path"`
+	Data     string `json:"data"`
+}
+
+type fetchWebContentResult struct {
+	hostResult
+	Content string `json:"content"`
+}
+
+func callHost(name string, params interface{}, result interface{}) error {
+	paramsBytes, err := json.Marshal(params)
+	if err != nil {
+		return fmt.Errorf("failed to marshal params for %s: %w", name, err)
+	}
+
+	mem := pdk.AllocateBytes(paramsBytes)
+	defer mem.Free()
+
+	var resOffset uint64
+	switch name {
+	case "get_git_file":
+		resOffset = host_get_git_file(mem.Offset())
+	case "search_code":
+		resOffset = host_search_code(mem.Offset())
+	case "fetch_web_content":
+		resOffset = host_fetch_web_content(mem.Offset())
+	default:
+		return fmt.Errorf("unknown host function: %s", name)
+	}
+
 	if resOffset == 0 {
-		return nil, errors.New("file not found or host error")
+		return errors.New("host function returned null")
 	}
 
 	resMem := pdk.FindMemory(resOffset)
 	if resMem.Length() == 0 {
-		return []byte{}, nil
+		return nil
 	}
 
-	return resMem.ReadBytes(), nil
+	if err := json.Unmarshal(resMem.ReadBytes(), result); err != nil {
+		return fmt.Errorf("failed to unmarshal result from %s: %w", name, err)
+	}
+
+	return nil
 }
+
+func getGitFile(branch, filePath string) ([]byte, error) {
+	var result getGitFileResult
+	err := callHost("get_git_file", map[string]string{
+		"branch":    branch,
+		"file_path": filePath,
+	}, &result)
+	if err != nil {
+		return nil, err
+	}
+	if result.Error != "" {
+		return nil, errors.New(result.Error)
+	}
+	return result.Data, nil
+}
+
+func searchCode(branch, query string) ([]searchResult, error) {
+	var result searchCodeResult
+	err := callHost("search_code", map[string]string{
+		"branch": branch,
+		"query":  query,
+	}, &result)
+	if err != nil {
+		return nil, err
+	}
+	if result.Error != "" {
+		return nil, errors.New(result.Error)
+	}
+	return result.Results, nil
+}
+
+func fetchWebContent(url string) (string, error) {
+	var result fetchWebContentResult
+	err := callHost("fetch_web_content", map[string]string{
+		"url": url,
+	}, &result)
+	if err != nil {
+		return "", err
+	}
+	if result.Error != "" {
+		return "", errors.New(result.Error)
+	}
+	return result.Content, nil
+}
+
+//go:wasmimport extism:host/user get_git_file
+func host_get_git_file(argsPtr uint64) uint64
+
+//go:wasmimport extism:host/user search_code
+func host_search_code(argsPtr uint64) uint64
+
+//go:wasmimport extism:host/user fetch_web_content
+func host_fetch_web_content(argsPtr uint64) uint64
 
 //go:wasmexport review
 func Review() int32 {
@@ -95,15 +186,6 @@ func Review() int32 {
 	endpoint, ok := input.Vars["gemini_reviewer_endpoint"]
 	if !ok {
 		endpoint = defaultEndpoint
-	}
-
-	provider := input.Provider
-	if provider == "" {
-		if v, ok := input.Vars["provider"]; ok && v != "" {
-			provider = v
-		} else {
-			provider = "gitlab"
-		}
 	}
 
 	maxTurns := defaultMaxTurns
@@ -137,7 +219,7 @@ func Review() int32 {
 
 	fullPrompt := prompt + mr + description + "# Diff\n```\n" + string(input.Diffs) + "\n```\n"
 
-	result, err := review(fullPrompt, endpoint, apiKey, model, provider, input.ProjectID, input.ID, input.Branch, maxTurns, maxRetries)
+	result, err := review(fullPrompt, endpoint, apiKey, model, input.Branch, maxTurns, maxRetries)
 	if err != nil {
 		pdk.SetError(err)
 		return 1
@@ -168,9 +250,9 @@ type FunctionDeclaration struct {
 }
 
 type Parameters struct {
-	Type       string               `json:"type"`
-	Properties map[string]Property  `json:"properties,omitempty"`
-	Required   []string             `json:"required,omitempty"`
+	Type       string              `json:"type"`
+	Properties map[string]Property `json:"properties,omitempty"`
+	Required   []string            `json:"required,omitempty"`
 }
 
 type Property struct {
@@ -226,97 +308,160 @@ type Candidate struct {
 	Content Content `json:"content"`
 }
 
-func getGitFileTool() Tool {
-	return Tool{
-		FunctionDeclarations: []FunctionDeclaration{
-			{
-				Name:        "get_git_file",
-				Description: "Fetch the content of a file from the repository. By default, it fetches from the merge request source branch, but you can also specify the target branch to inspect the base version.",
-				Parameters: &Parameters{
-					Type: "OBJECT",
-					Properties: map[string]Property{
-						"file_path": {
-							Type:        "STRING",
-							Description: "The relative path to the file in the repository (e.g. 'pkg/server/server.go').",
+func tools() []Tool {
+	return []Tool{
+		{
+			FunctionDeclarations: []FunctionDeclaration{
+				{
+					Name:        "get_git_file",
+					Description: "Fetch the content of a file from the repository. By default, it fetches from the merge request source branch, but you can also specify the target branch to inspect the base version.",
+					Parameters: &Parameters{
+						Type: "OBJECT",
+						Properties: map[string]Property{
+							"file_path": {
+								Type:        "STRING",
+								Description: "The relative path to the file in the repository (e.g. 'pkg/server/server.go').",
+							},
+							"branch": {
+								Type:        "STRING",
+								Description: "Optional branch name to fetch the file from (e.g. source branch or target branch). If not specified, defaults to the merge request source branch.",
+							},
 						},
-						"branch": {
-							Type:        "STRING",
-							Description: "Optional branch name to fetch the file from (e.g. source branch or target branch). If not specified, defaults to the merge request source branch.",
-						},
+						Required: []string{"file_path"},
 					},
-					Required: []string{"file_path"},
+				},
+			},
+		},
+		{
+			FunctionDeclarations: []FunctionDeclaration{
+				{
+					Name:        "search_code",
+					Description: "Search for code patterns in the repository. Searches all files in the specified branch and returns matching file paths with their content (up to 100 results).",
+					Parameters: &Parameters{
+						Type: "OBJECT",
+						Properties: map[string]Property{
+							"query": {
+								Type:        "STRING",
+								Description: "The search query to find code in the repository. Can be a function name, type name, variable name, or a code snippet.",
+							},
+							"branch": {
+								Type:        "STRING",
+								Description: "Optional branch name to search in (e.g. source branch or target branch). If not specified, defaults to the merge request source branch.",
+							},
+						},
+						Required: []string{"query"},
+					},
+				},
+			},
+		},
+		{
+			FunctionDeclarations: []FunctionDeclaration{
+				{
+					Name:        "fetch_web_content",
+					Description: "Fetch content from a web URL and convert it to Markdown. Only approved domains are allowed: pkg.go.dev, docs.python.org, developer.mozilla.org, golang.org. Use this to look up library documentation or API references.",
+					Parameters: &Parameters{
+						Type: "OBJECT",
+						Properties: map[string]Property{
+							"url": {
+								Type:        "STRING",
+								Description: "The full URL to fetch content from (e.g. 'https://pkg.go.dev/net/http'). Must be from an approved domain.",
+							},
+						},
+						Required: []string{"url"},
+					},
 				},
 			},
 		},
 	}
 }
 
-func extractFilePath(args map[string]interface{}) string {
+func extractStringArg(args map[string]interface{}, keys ...string) string {
 	if args == nil {
 		return ""
 	}
-	if v, ok := args["file_path"].(string); ok && v != "" {
-		return v
-	}
-	if v, ok := args["filePath"].(string); ok && v != "" {
-		return v
-	}
-	if v, ok := args["path"].(string); ok && v != "" {
-		return v
+	for _, key := range keys {
+		if v, ok := args[key].(string); ok && v != "" {
+			return v
+		}
 	}
 	return ""
 }
 
-func extractBranch(args map[string]interface{}, defaultBranch string) string {
-	if args == nil {
-		return defaultBranch
-	}
-	if v, ok := args["branch"].(string); ok && v != "" {
-		return v
-	}
-	if v, ok := args["ref"].(string); ok && v != "" {
-		return v
-	}
-	return defaultBranch
-}
-
-func handleFunctionCall(fnCall *FunctionCall, provider string, projectID, mrID int64, defaultBranch string) *FunctionResponse {
-	if fnCall.Name == "get_git_file" {
-		filePath := extractFilePath(fnCall.Args)
+func handleFunctionCall(fnCall *FunctionCall, defaultBranch string) *FunctionResponse {
+	switch fnCall.Name {
+	case "get_git_file":
+		filePath := extractStringArg(fnCall.Args, "file_path", "filePath", "path")
 		if filePath == "" {
 			return &FunctionResponse{
-				Name: fnCall.Name,
-				Response: map[string]interface{}{
-					"error": "file_path argument is missing",
-				},
+				Name:     fnCall.Name,
+				Response: map[string]interface{}{"error": "file_path argument is missing"},
 			}
 		}
-
-		branch := extractBranch(fnCall.Args, defaultBranch)
-
-		fileData, err := getGitFile(provider, projectID, mrID, branch, filePath)
+		branch := extractStringArg(fnCall.Args, "branch", "ref")
+		if branch == "" {
+			branch = defaultBranch
+		}
+		fileData, err := getGitFile(branch, filePath)
 		if err != nil {
 			return &FunctionResponse{
-				Name: fnCall.Name,
-				Response: map[string]interface{}{
-					"error": fmt.Sprintf("failed to get file %s on branch %s: %s", filePath, branch, err.Error()),
-				},
+				Name:     fnCall.Name,
+				Response: map[string]interface{}{"error": fmt.Sprintf("failed to get file %s on branch %s: %s", filePath, branch, err.Error())},
 			}
 		}
-
 		return &FunctionResponse{
-			Name: fnCall.Name,
-			Response: map[string]interface{}{
-				"content": string(fileData),
-			},
+			Name:     fnCall.Name,
+			Response: map[string]interface{}{"content": string(fileData)},
 		}
-	}
 
-	return &FunctionResponse{
-		Name: fnCall.Name,
-		Response: map[string]interface{}{
-			"error": fmt.Sprintf("unknown tool: %s", fnCall.Name),
-		},
+	case "search_code":
+		query := extractStringArg(fnCall.Args, "query", "q")
+		if query == "" {
+			return &FunctionResponse{
+				Name:     fnCall.Name,
+				Response: map[string]interface{}{"error": "query argument is missing"},
+			}
+		}
+		branch := extractStringArg(fnCall.Args, "branch", "ref")
+		if branch == "" {
+			branch = defaultBranch
+		}
+		results, err := searchCode(branch, query)
+		if err != nil {
+			return &FunctionResponse{
+				Name:     fnCall.Name,
+				Response: map[string]interface{}{"error": fmt.Sprintf("failed to search code: %s", err.Error())},
+			}
+		}
+		return &FunctionResponse{
+			Name:     fnCall.Name,
+			Response: map[string]interface{}{"results": results},
+		}
+
+	case "fetch_web_content":
+		url := extractStringArg(fnCall.Args, "url", "link")
+		if url == "" {
+			return &FunctionResponse{
+				Name:     fnCall.Name,
+				Response: map[string]interface{}{"error": "url argument is missing"},
+			}
+		}
+		content, err := fetchWebContent(url)
+		if err != nil {
+			return &FunctionResponse{
+				Name:     fnCall.Name,
+				Response: map[string]interface{}{"error": fmt.Sprintf("failed to fetch web content: %s", err.Error())},
+			}
+		}
+		return &FunctionResponse{
+			Name:     fnCall.Name,
+			Response: map[string]interface{}{"content": content},
+		}
+
+	default:
+		return &FunctionResponse{
+			Name:     fnCall.Name,
+			Response: map[string]interface{}{"error": fmt.Sprintf("unknown tool: %s", fnCall.Name)},
+		}
 	}
 }
 
@@ -336,12 +481,6 @@ func sendHTTPRequestWithRetry(url string, body []byte, maxRetries int) (pdk.HTTP
 			return resp, nil
 		}
 
-		// Retriable statuses:
-		// 429: Too Many Requests (Rate limit)
-		// 500: Internal Server Error
-		// 502: Bad Gateway
-		// 503: Service Unavailable (Model high demand / overloaded)
-		// 504: Gateway Timeout
 		isRetriable := status == 429 || status == 500 || status == 502 || status == 503 || status == 504
 		if isRetriable && attempt < maxRetries {
 			time.Sleep(backoff)
@@ -355,9 +494,9 @@ func sendHTTPRequestWithRetry(url string, body []byte, maxRetries int) (pdk.HTTP
 	return resp, fmt.Errorf("request failed after %d retries: status %d", maxRetries, resp.Status())
 }
 
-func review(initialPrompt, endpoint, apiKey, model, provider string, projectID, mrID int64, defaultBranch string, maxTurns, maxRetries int) (string, error) {
+func review(initialPrompt, endpoint, apiKey, model, defaultBranch string, maxTurns, maxRetries int) (string, error) {
 	url := fmt.Sprintf("%s%s:generateContent?key=%s", endpoint, model, apiKey)
-	tools := []Tool{getGitFileTool()}
+	tools := tools()
 
 	contents := []Content{
 		{
@@ -376,7 +515,6 @@ func review(initialPrompt, endpoint, apiKey, model, provider string, projectID, 
 		geminiReq := GeminiRequest{
 			Contents: contents,
 		}
-		// On the final turn, omit tools to force the model to provide its final review comment
 		if turn < maxTurns-1 {
 			geminiReq.Tools = tools
 		}
@@ -422,7 +560,6 @@ func review(initialPrompt, endpoint, apiKey, model, provider string, projectID, 
 			latestText = strings.Join(textParts, "\n")
 		}
 
-		// If no function calls, the model has finished its review
 		if len(functionCalls) == 0 {
 			if latestText != "" {
 				return latestText, nil
@@ -430,22 +567,19 @@ func review(initialPrompt, endpoint, apiKey, model, provider string, projectID, 
 			return "", errors.New("model returned neither text nor function call")
 		}
 
-		// Append the model's turn to conversation history
 		contents = append(contents, Content{
 			Role:  "model",
 			Parts: modelParts,
 		})
 
-		// Execute function calls and collect function responses
 		var functionResponseParts []Part
 		for _, fnCall := range functionCalls {
-			fnResp := handleFunctionCall(fnCall, provider, projectID, mrID, defaultBranch)
+			fnResp := handleFunctionCall(fnCall, defaultBranch)
 			functionResponseParts = append(functionResponseParts, Part{
 				FunctionResponse: fnResp,
 			})
 		}
 
-		// Append the function responses turn to conversation history
 		contents = append(contents, Content{
 			Role:  "user",
 			Parts: functionResponseParts,

@@ -5,26 +5,47 @@ import (
 	"testing"
 )
 
-func TestGetGitFileTool(t *testing.T) {
-	tool := getGitFileTool()
-	if len(tool.FunctionDeclarations) != 1 {
-		t.Fatalf("expected 1 function declaration, got %d", len(tool.FunctionDeclarations))
+func TestTools(t *testing.T) {
+	tools := tools()
+	if len(tools) != 3 {
+		t.Fatalf("expected 3 tools, got %d", len(tools))
 	}
 
-	decl := tool.FunctionDeclarations[0]
-	if decl.Name != "get_git_file" {
-		t.Errorf("expected function name 'get_git_file', got '%s'", decl.Name)
+	names := map[string]bool{}
+	for _, tool := range tools {
+		for _, decl := range tool.FunctionDeclarations {
+			names[decl.Name] = true
+		}
 	}
 
-	if decl.Parameters == nil || decl.Parameters.Type != "OBJECT" {
-		t.Errorf("expected parameter type 'OBJECT', got '%v'", decl.Parameters)
+	for _, name := range []string{"get_git_file", "search_code", "fetch_web_content"} {
+		if !names[name] {
+			t.Errorf("expected tool '%s' not found", name)
+		}
+	}
+}
+
+func TestGetGitFileToolParams(t *testing.T) {
+	tools := tools()
+	var getGitFileDecl FunctionDeclaration
+	for _, tool := range tools {
+		for _, decl := range tool.FunctionDeclarations {
+			if decl.Name == "get_git_file" {
+				getGitFileDecl = decl
+				break
+			}
+		}
 	}
 
-	if _, ok := decl.Parameters.Properties["file_path"]; !ok {
+	if getGitFileDecl.Parameters == nil || getGitFileDecl.Parameters.Type != "OBJECT" {
+		t.Errorf("expected parameter type 'OBJECT', got '%v'", getGitFileDecl.Parameters)
+	}
+
+	if _, ok := getGitFileDecl.Parameters.Properties["file_path"]; !ok {
 		t.Errorf("expected 'file_path' property in declaration parameters")
 	}
 
-	if _, ok := decl.Parameters.Properties["branch"]; !ok {
+	if _, ok := getGitFileDecl.Parameters.Properties["branch"]; !ok {
 		t.Errorf("expected 'branch' property in declaration parameters")
 	}
 }
@@ -64,9 +85,9 @@ func TestExtractFilePath(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := extractFilePath(tt.args)
+			got := extractStringArg(tt.args, "file_path", "filePath", "path")
 			if got != tt.expected {
-				t.Errorf("extractFilePath() = %v, want %v", got, tt.expected)
+				t.Errorf("extractStringArg() = %v, want %v", got, tt.expected)
 			}
 		})
 	}
@@ -107,9 +128,12 @@ func TestExtractBranch(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := extractBranch(tt.args, tt.defaultBranch)
-			if got != tt.expected {
-				t.Errorf("extractBranch() = %v, want %v", got, tt.expected)
+			branch := extractStringArg(tt.args, "branch", "ref")
+			if branch == "" {
+				branch = tt.defaultBranch
+			}
+			if branch != tt.expected {
+				t.Errorf("extractBranch() = %v, want %v", branch, tt.expected)
 			}
 		})
 	}
@@ -152,7 +176,7 @@ func TestGeminiRequestSerialization(t *testing.T) {
 				},
 			},
 		},
-		Tools: []Tool{getGitFileTool()},
+		Tools: tools(),
 	}
 
 	data, err := json.Marshal(req)
@@ -170,14 +194,13 @@ func TestGeminiRequestSerialization(t *testing.T) {
 		t.Fatalf("expected 3 content turns, got %v", contents)
 	}
 
-	tools, ok := parsed["tools"].([]interface{})
-	if !ok || len(tools) != 1 {
-		t.Fatalf("expected 1 tool, got %v", tools)
+	toolsParsed, ok := parsed["tools"].([]interface{})
+	if !ok || len(toolsParsed) != 3 {
+		t.Fatalf("expected 3 tools, got %v", toolsParsed)
 	}
 }
 
 func TestGeminiResponseParsing(t *testing.T) {
-	// 1. Text response
 	textJSON := `{
 		"candidates": [
 			{
@@ -202,7 +225,6 @@ func TestGeminiResponseParsing(t *testing.T) {
 		t.Errorf("unexpected parsed candidate text: %+v", resp1)
 	}
 
-	// 2. Function call response
 	fnJSON := `{
 		"candidates": [
 			{
@@ -239,10 +261,15 @@ func TestGeminiResponseParsing(t *testing.T) {
 	if part.FunctionCall.Name != "get_git_file" {
 		t.Errorf("expected name 'get_git_file', got '%s'", part.FunctionCall.Name)
 	}
-	if extractFilePath(part.FunctionCall.Args) != "pkg/handlers/provider.go" {
+	filePath := extractStringArg(part.FunctionCall.Args, "file_path", "filePath", "path")
+	if filePath != "pkg/handlers/provider.go" {
 		t.Errorf("expected path 'pkg/handlers/provider.go', got '%v'", part.FunctionCall.Args)
 	}
-	if extractBranch(part.FunctionCall.Args, "feature") != "main" {
+	branch := extractStringArg(part.FunctionCall.Args, "branch", "ref")
+	if branch == "" {
+		branch = "feature"
+	}
+	if branch != "main" {
 		t.Errorf("expected branch 'main', got '%v'", part.FunctionCall.Args)
 	}
 }
@@ -253,7 +280,7 @@ func TestHandleUnknownFunctionCall(t *testing.T) {
 		Args: map[string]interface{}{},
 	}
 
-	resp := handleFunctionCall(fnCall, "gitlab", 1, 1, "main")
+	resp := handleFunctionCall(fnCall, "main")
 	if resp == nil {
 		t.Fatalf("expected response, got nil")
 	}
@@ -265,8 +292,37 @@ func TestHandleUnknownFunctionCall(t *testing.T) {
 	}
 }
 
+func TestHandleSearchCodeMissingQuery(t *testing.T) {
+	fnCall := &FunctionCall{
+		Name: "search_code",
+		Args: map[string]interface{}{"branch": "main"},
+	}
+
+	resp := handleFunctionCall(fnCall, "main")
+	if resp == nil {
+		t.Fatalf("expected response, got nil")
+	}
+	if errStr, ok := resp.Response["error"].(string); !ok || errStr == "" {
+		t.Errorf("expected error in response, got %v", resp.Response)
+	}
+}
+
+func TestHandleFetchWebContentMissingUrl(t *testing.T) {
+	fnCall := &FunctionCall{
+		Name: "fetch_web_content",
+		Args: map[string]interface{}{},
+	}
+
+	resp := handleFunctionCall(fnCall, "main")
+	if resp == nil {
+		t.Fatalf("expected response, got nil")
+	}
+	if errStr, ok := resp.Response["error"].(string); !ok || errStr == "" {
+		t.Errorf("expected error in response, got %v", resp.Response)
+	}
+}
+
 func TestThoughtSignatureParsing(t *testing.T) {
-	// 1. camelCase thoughtSignature
 	camelJSON := `{
 		"functionCall": {
 			"name": "get_git_file",
@@ -282,7 +338,6 @@ func TestThoughtSignatureParsing(t *testing.T) {
 		t.Errorf("expected 'test_sig_camel_123', got '%s'", p1.ThoughtSignature)
 	}
 
-	// 2. snake_case thought_signature
 	snakeJSON := `{
 		"functionCall": {
 			"name": "get_git_file",
@@ -298,7 +353,6 @@ func TestThoughtSignatureParsing(t *testing.T) {
 		t.Errorf("expected 'test_sig_snake_456', got '%s'", p2.ThoughtSignature)
 	}
 
-	// 3. thought part with text
 	thoughtJSON := `{
 		"thought": true,
 		"text": "Analyzing the diff...",
@@ -318,7 +372,6 @@ func TestThoughtSignatureParsing(t *testing.T) {
 		t.Errorf("expected 'thought_sig_789', got '%s'", p3.ThoughtSignature)
 	}
 
-	// 4. Serialization roundtrip
 	out, err := json.Marshal(p1)
 	if err != nil {
 		t.Fatalf("failed to marshal part: %v", err)
