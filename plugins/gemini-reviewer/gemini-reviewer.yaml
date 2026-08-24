@@ -19,7 +19,7 @@ vars:
     type:
     - env
     - config
-  - name: gemini_reviewer_max_turns # 8 is default
+  - name: gemini_reviewer_max_turns # 20 is default
     type:
     - env
     - config

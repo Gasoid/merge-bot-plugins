@@ -26,7 +26,7 @@ Use these tools only when necessary, and provide your complete review as soon as
 `
 	defaultModel          = "gemini-2.5-flash-lite"
 	defaultEndpoint       = "https://generativelanguage.googleapis.com/v1beta/models/"
-	defaultMaxTurns       = 8
+	defaultMaxTurns       = 20
 	defaultMaxRetries     = 5
 	defaultInitialBackoff = 2 * time.Second
 )
