@@ -463,6 +463,10 @@ func parseOutput(result string) PluginOutput {
 	return output
 }
 
+func countLines(data string) int {
+	return strings.Count(strings.TrimRight(data, "\n"), "\n") + 1
+}
+
 func validateThreads(threads []Thread, sourceBranch, targetBranch string) []Thread {
 	type fileKey struct {
 		branch, path string
@@ -470,6 +474,12 @@ func validateThreads(threads []Thread, sourceBranch, targetBranch string) []Thre
 	fileLines := map[fileKey]int{}
 	valid := make([]Thread, 0, len(threads))
 	for _, t := range threads {
+		if t.NewLine > 0 && t.NewPath == "" {
+			continue
+		}
+		if t.OldLine > 0 && t.OldPath == "" {
+			continue
+		}
 		if t.NewLine > 0 && t.NewPath != "" {
 			key := fileKey{sourceBranch, t.NewPath}
 			lineCount, ok := fileLines[key]
@@ -478,7 +488,7 @@ func validateThreads(threads []Thread, sourceBranch, targetBranch string) []Thre
 				if err != nil {
 					fileLines[key] = -1
 				} else {
-					fileLines[key] = strings.Count(string(data), "\n") + 1
+					fileLines[key] = countLines(string(data))
 					lineCount = fileLines[key]
 				}
 			}
@@ -498,7 +508,7 @@ func validateThreads(threads []Thread, sourceBranch, targetBranch string) []Thre
 				if err != nil {
 					fileLines[key] = -1
 				} else {
-					fileLines[key] = strings.Count(string(data), "\n") + 1
+					fileLines[key] = countLines(string(data))
 					lineCount = fileLines[key]
 				}
 			}
