@@ -278,7 +278,9 @@ func Review() int32 {
 		return 1
 	}
 
-	pdk.OutputJSON(parseOutput(result))
+	output := parseOutput(result)
+	output.Threads = validateThreads(output.Threads, defaultBranch, input.TargetBranch)
+	pdk.OutputJSON(output)
 
 	return 0
 }
@@ -459,6 +461,54 @@ func parseOutput(result string) PluginOutput {
 	}
 
 	return output
+}
+
+func validateThreads(threads []Thread, sourceBranch, targetBranch string) []Thread {
+	type fileKey struct {
+		branch, path string
+	}
+	fileLines := map[fileKey]int{}
+	valid := make([]Thread, 0, len(threads))
+	for _, t := range threads {
+		if t.NewLine > 0 && t.NewPath != "" {
+			key := fileKey{sourceBranch, t.NewPath}
+			lineCount, ok := fileLines[key]
+			if !ok {
+				data, err := getGitFile(sourceBranch, t.NewPath)
+				if err != nil {
+					fileLines[key] = -1
+				} else {
+					fileLines[key] = strings.Count(string(data), "\n") + 1
+					lineCount = fileLines[key]
+				}
+			}
+			if lineCount < 0 || int(t.NewLine) > lineCount {
+				continue
+			}
+		}
+		if t.OldLine > 0 && t.OldPath != "" {
+			branch := targetBranch
+			if branch == "" {
+				branch = sourceBranch
+			}
+			key := fileKey{branch, t.OldPath}
+			lineCount, ok := fileLines[key]
+			if !ok {
+				data, err := getGitFile(branch, t.OldPath)
+				if err != nil {
+					fileLines[key] = -1
+				} else {
+					fileLines[key] = strings.Count(string(data), "\n") + 1
+					lineCount = fileLines[key]
+				}
+			}
+			if lineCount < 0 || int(t.OldLine) > lineCount {
+				continue
+			}
+		}
+		valid = append(valid, t)
+	}
+	return valid
 }
 
 func handleFunctionCall(fnCall *FunctionCall, defaultBranch string) *FunctionResponse {
