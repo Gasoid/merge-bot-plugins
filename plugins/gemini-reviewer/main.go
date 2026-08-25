@@ -78,15 +78,15 @@ type PluginInput struct {
 
 type PluginOutput struct {
 	Comment string   `json:"comment"`
-	Threads []Thread `json:"threads"`
+	Threads []Thread `json:"threads,omitempty"`
 }
 
 type Thread struct {
-	NewLine int64  `json:"new_line"`
-	OldLine int64  `json:"old_line"`
-	Body    string `json:"body"`
-	NewPath string `json:"new_path"`
-	OldPath string `json:"old_path"`
+	NewLine int64  `json:"new_line,omitempty"`
+	OldLine int64  `json:"old_line,omitempty"`
+	Body    string `json:"body,omitempty"`
+	NewPath string `json:"new_path,omitempty"`
+	OldPath string `json:"old_path,omitempty"`
 }
 
 type hostResult struct {

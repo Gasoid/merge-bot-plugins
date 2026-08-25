@@ -384,3 +384,59 @@ func TestThoughtSignatureParsing(t *testing.T) {
 		t.Errorf("expected 'test_sig_camel_123' in serialized JSON, got %v", roundtrip["thoughtSignature"])
 	}
 }
+
+func TestParseOutputWithThreads(t *testing.T) {
+	result := `{
+		"comment": "Looks good overall",
+		"threads": [
+			{
+				"new_line": 12,
+				"new_path": "app/file.py",
+				"old_path": "app/file.py",
+				"body": "fix this"
+			},
+			{
+				"old_line": 30,
+				"old_path": "app/file.py",
+				"new_path": "app/file.py",
+				"body": "consider removing"
+			}
+		]
+	}`
+
+	output := parseOutput(result)
+	if output.Comment != "Looks good overall" {
+		t.Errorf("expected comment 'Looks good overall', got '%s'", output.Comment)
+	}
+	if len(output.Threads) != 2 {
+		t.Fatalf("expected 2 threads, got %d", len(output.Threads))
+	}
+
+	added := output.Threads[0]
+	if added.NewLine != 12 || added.OldLine != 0 {
+		t.Errorf("expected added thread new_line=12 old_line=0, got %+v", added)
+	}
+
+	removed := output.Threads[1]
+	if removed.OldLine != 30 || removed.NewLine != 0 {
+		t.Errorf("expected removed thread old_line=30 new_line=0, got %+v", removed)
+	}
+}
+
+func TestParseOutputPlainText(t *testing.T) {
+	output := parseOutput("This is a plain text review, not JSON.")
+	if output.Comment != "This is a plain text review, not JSON." {
+		t.Errorf("expected plain text comment, got '%s'", output.Comment)
+	}
+	if len(output.Threads) != 0 {
+		t.Errorf("expected 0 threads, got %d", len(output.Threads))
+	}
+}
+
+func TestParseOutputCodeFence(t *testing.T) {
+	result := "```json\n{\"comment\": \"wrapped\"}\n```"
+	output := parseOutput(result)
+	if output.Comment != "wrapped" {
+		t.Errorf("expected comment 'wrapped', got '%s'", output.Comment)
+	}
+}
