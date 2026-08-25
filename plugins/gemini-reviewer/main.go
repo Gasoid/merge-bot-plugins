@@ -21,7 +21,7 @@ This is an automated review. You suggest what to fix/make better and user will f
 You have access to tools to gather additional context for a thorough review:
 - "get_git_file" — fetch the full content of any file from the repository.
 - "search_code" — search for code patterns across the repository, results are limited to 100.
-- "fetch_web_content" — fetch documentation or web resources (limited to approved domains like pkg.go.dev, docs.python.org, developer.mozilla.org, golang.org).
+- "fetch_web_content" — fetch documentation or web resources (limited to approved domains and their subdomains: pkg.go.dev, docs.python.org, developer.mozilla.org, golang.org).
 Use these tools only when necessary, and provide your complete review as soon as you have gathered sufficient information.
 
 ## Output format
@@ -110,7 +110,7 @@ type searchResult struct {
 
 type fetchWebContentResult struct {
 	hostResult
-	Content string `json:"content"`
+	Content []byte `json:"content"`
 }
 
 func callHost(name string, params interface{}, result interface{}) error {
@@ -191,7 +191,7 @@ func fetchWebContent(url string) (string, error) {
 	if result.Error != "" {
 		return "", errors.New(result.Error)
 	}
-	return result.Content, nil
+	return string(result.Content), nil
 }
 
 //go:wasmimport extism:host/user get_git_file
@@ -407,13 +407,13 @@ func tools() []Tool {
 			FunctionDeclarations: []FunctionDeclaration{
 				{
 					Name:        "fetch_web_content",
-					Description: "Fetch content from a web URL and convert it to Markdown. Only approved domains are allowed: pkg.go.dev, docs.python.org, developer.mozilla.org, golang.org. Use this to look up library documentation or API references.",
+					Description: "Fetch content from a web URL and convert it to Markdown. Only approved domains and their subdomains are allowed (e.g. pkg.go.dev, docs.python.org, developer.mozilla.org, golang.org). Use this to look up library documentation or API references.",
 					Parameters: &Parameters{
 						Type: "OBJECT",
 						Properties: map[string]Property{
 							"url": {
 								Type:        "STRING",
-								Description: "The full URL to fetch content from (e.g. 'https://pkg.go.dev/net/http'). Must be from an approved domain.",
+								Description: "The full URL to fetch content from (e.g. 'https://pkg.go.dev/net/http'). Must be from an approved domain or its subdomain.",
 							},
 						},
 						Required: []string{"url"},
@@ -439,6 +439,9 @@ func extractStringArg(args map[string]interface{}, keys ...string) string {
 func truncate(s string, maxBytes int) string {
 	if len(s) <= maxBytes {
 		return s
+	}
+	for maxBytes > 0 && maxBytes < len(s) && s[maxBytes]&0xC0 == 0x80 {
+		maxBytes--
 	}
 	return s[:maxBytes] + "\n... [truncated]"
 }
