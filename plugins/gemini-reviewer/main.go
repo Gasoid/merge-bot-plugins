@@ -450,10 +450,14 @@ func truncate(s string, maxBytes int) string {
 
 func parseOutput(result string) PluginOutput {
 	trimmed := strings.TrimSpace(result)
-	trimmed = strings.TrimPrefix(trimmed, "```json")
-	trimmed = strings.TrimPrefix(trimmed, "```")
-	trimmed = strings.TrimSuffix(trimmed, "```")
-	trimmed = strings.TrimSpace(trimmed)
+	if strings.HasPrefix(trimmed, "```") {
+		trimmed = strings.TrimPrefix(trimmed, "```json")
+		trimmed = strings.TrimPrefix(trimmed, "```")
+		if idx := strings.LastIndex(trimmed, "```"); idx != -1 {
+			trimmed = trimmed[:idx]
+		}
+		trimmed = strings.TrimSpace(trimmed)
+	}
 
 	output := PluginOutput{}
 	if err := json.Unmarshal([]byte(trimmed), &output); err != nil {
@@ -464,6 +468,9 @@ func parseOutput(result string) PluginOutput {
 }
 
 func countLines(data string) int {
+	if len(data) == 0 {
+		return 0
+	}
 	return strings.Count(strings.TrimRight(data, "\n"), "\n") + 1
 }
 
@@ -626,7 +633,7 @@ func sendHTTPRequestWithRetry(url string, body []byte, maxRetries int) (pdk.HTTP
 		return resp, fmt.Errorf("request failed with status %d: %s", status, string(resp.Body()))
 	}
 
-	return resp, fmt.Errorf("request failed after %d retries: status %d", maxRetries, resp.Status())
+	return resp, errors.New("request failed: max retries exceeded")
 }
 
 func review(initialPrompt, endpoint, apiKey, model, defaultBranch string, maxTurns, maxRetries int) (string, error) {

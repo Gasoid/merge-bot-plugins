@@ -440,3 +440,88 @@ func TestParseOutputCodeFence(t *testing.T) {
 		t.Errorf("expected comment 'wrapped', got '%s'", output.Comment)
 	}
 }
+
+func TestParseOutputBackticksInBody(t *testing.T) {
+	result := "```json\n{\"comment\": \"use `code` fences\"}\n```"
+	output := parseOutput(result)
+	if output.Comment != "use `code` fences" {
+		t.Errorf("expected comment 'use `code` fences', got '%s'", output.Comment)
+	}
+}
+
+func TestParseOutputPlainBacktickFence(t *testing.T) {
+	result := "```\n{\"comment\": \"no lang\"}\n```"
+	output := parseOutput(result)
+	if output.Comment != "no lang" {
+		t.Errorf("expected comment 'no lang', got '%s'", output.Comment)
+	}
+}
+
+func TestCountLines(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected int
+	}{
+		{"empty string", "", 0},
+		{"single newline", "\n", 1},
+		{"no trailing newline", "a\nb\nc", 3},
+		{"trailing newline", "a\nb\nc\n", 3},
+		{"multiple trailing newlines", "a\nb\n\n\n", 2},
+		{"single line no newline", "a", 1},
+		{"blank lines only", "\n\n", 2},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := countLines(tt.input)
+			if got != tt.expected {
+				t.Errorf("countLines(%q) = %d, want %d", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestTruncate(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		maxBytes int
+	}{
+		{"no truncation", "short", 100},
+		{"exact boundary", "12345", 5},
+		{"ascii truncation", "123456789", 5},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := truncate(tt.input, tt.maxBytes)
+			if tt.name == "no truncation" && got != tt.input {
+				t.Errorf("expected no truncation, got %q", got)
+			}
+			if tt.name == "exact boundary" && got != tt.input {
+				t.Errorf("expected no truncation at boundary, got %q", got)
+			}
+			if len(got) > tt.maxBytes && tt.name == "ascii truncation" {
+				t.Errorf("expected result within %d bytes before marker, got %q", tt.maxBytes, got)
+			}
+		})
+	}
+}
+
+func TestTruncateUTF8(t *testing.T) {
+	input := "héllo wörld"
+	got := truncate(input, 4)
+
+	if len(got) > 0 {
+		cut := got
+		if len(got) >= len("\n... [truncated]") {
+			cut = got[:len(got)-len("\n... [truncated]")]
+		}
+		for i := 0; i < len(cut); i++ {
+			if cut[i]&0xC0 == 0x80 {
+				t.Errorf("truncate split a UTF-8 continuation byte at position %d: %q", i, cut)
+			}
+		}
+	}
+}
