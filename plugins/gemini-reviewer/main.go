@@ -23,12 +23,47 @@ You have access to tools to gather additional context for a thorough review:
 - "search_code" — search for code patterns across the repository, results are limited to 100.
 - "fetch_web_content" — fetch documentation or web resources (limited to approved domains like pkg.go.dev, docs.python.org, developer.mozilla.org, golang.org).
 Use these tools only when necessary, and provide your complete review as soon as you have gathered sufficient information.
+
+## Output format
+
+Return ONLY a valid JSON object (no markdown fences, no extra text) in the following shape:
+
+{
+  "comment": "Brief summary of the merge request",
+  "threads": [
+    {
+      "new_line": 123,
+      "old_line": 123,
+      "new_path": "app/file.py",
+      "old_path": "app/file.py",
+      "body": "problem description and suggestion to fix"
+    }
+  ]
+}
+
+Rules for threads (inline comments per line):
+- old_path is the file path before the change; omit it if it does not exist or is /dev/null.
+- new_path is the file path after the change; omit it if it does not exist or is /dev/null.
+- old_line is the line number before the change (optional); omit it if the line did not exist.
+- new_line is the line number after the change (optional); omit it if the line is deleted.
+- To comment on an added line, use new_line and omit old_line.
+- To comment on a removed line, use old_line and omit new_line.
+- To comment on an unchanged line, include both new_line and old_line; they may differ if earlier changes shifted line numbers.
+
+LINE NUMBER ACCURACY IS CRITICAL:
+1. Find the hunk header: @@ -old_start,old_count +new_start,new_count @@ (e.g. @@ -10,5 +12,6 @@ means old starts at 10, new starts at 12).
+2. Count from the start: lines starting with '-' exist only in the OLD version (use old_line); lines starting with '+' exist only in the NEW version (use new_line); lines starting with ' ' exist in both (use both).
+3. NEVER guess or calculate line numbers. Use only what you can count directly from the diff. If you cannot determine a line number with 100% certainty, OMIT that field.
+4. Invalid line numbers cause the review to fail. Double-check every number.
+
+If you have no inline (thread) comments, return {"comment": "..."} with an empty or omitted threads array.
 `
 	defaultModel          = "gemini-2.5-flash-lite"
 	defaultEndpoint       = "https://generativelanguage.googleapis.com/v1beta/models/"
 	defaultMaxTurns       = 20
 	defaultMaxRetries     = 5
 	defaultInitialBackoff = 2 * time.Second
+	maxToolResultBytes    = 64 * 1024
 )
 
 type PluginInput struct {
@@ -42,7 +77,16 @@ type PluginInput struct {
 }
 
 type PluginOutput struct {
-	Comment string `json:"comment"`
+	Comment string   `json:"comment"`
+	Threads []Thread `json:"threads"`
+}
+
+type Thread struct {
+	NewLine int64  `json:"new_line"`
+	OldLine int64  `json:"old_line"`
+	Body    string `json:"body"`
+	NewPath string `json:"new_path"`
+	OldPath string `json:"old_path"`
 }
 
 type hostResult struct {
@@ -60,8 +104,8 @@ type searchCodeResult struct {
 }
 
 type searchResult struct {
-	FilePath string `json:"file_path"`
-	Data     string `json:"data"`
+	Path string `json:"path"`
+	Line int64  `json:"line"`
 }
 
 type fetchWebContentResult struct {
@@ -96,7 +140,7 @@ func callHost(name string, params interface{}, result interface{}) error {
 
 	resMem := pdk.FindMemory(resOffset)
 	if resMem.Length() == 0 {
-		return nil
+		return fmt.Errorf("host function %s returned empty result", name)
 	}
 
 	if err := json.Unmarshal(resMem.ReadBytes(), result); err != nil {
@@ -215,21 +259,26 @@ func Review() int32 {
 		branchInfo += fmt.Sprintf("Target Branch: %s\n", input.TargetBranch)
 	}
 
+	defaultBranch := input.Branch
+	if defaultBranch == "" {
+		defaultBranch = input.TargetBranch
+	}
+	if defaultBranch == "" {
+		pdk.SetError(errors.New("branch is not provided"))
+		return 1
+	}
+
 	mr := fmt.Sprintf("\nTitle: %s\nAuthor: %s\n%s", input.Title, input.Author, branchInfo)
 
 	fullPrompt := prompt + mr + description + "# Diff\n```\n" + string(input.Diffs) + "\n```\n"
 
-	result, err := review(fullPrompt, endpoint, apiKey, model, input.Branch, maxTurns, maxRetries)
+	result, err := review(fullPrompt, endpoint, apiKey, model, defaultBranch, maxTurns, maxRetries)
 	if err != nil {
 		pdk.SetError(err)
 		return 1
 	}
 
-	output := PluginOutput{
-		Comment: result,
-	}
-
-	pdk.OutputJSON(output)
+	pdk.OutputJSON(parseOutput(result))
 
 	return 0
 }
@@ -336,13 +385,13 @@ func tools() []Tool {
 			FunctionDeclarations: []FunctionDeclaration{
 				{
 					Name:        "search_code",
-					Description: "Search for code patterns in the repository. Searches all files in the specified branch and returns matching file paths with their content (up to 100 results).",
+					Description: "Search for code patterns in the repository. Searches all files in the specified branch and returns matching file paths with line numbers (up to 100 results). The query supports filters: prefix a term with 'filename:', 'path:', or 'extension:' to narrow results (e.g. 'a query filename:some_name*'), and wildcards ('*') for glob matching. See https://docs.gitlab.com/api/search/#scope-blobs-2",
 					Parameters: &Parameters{
 						Type: "OBJECT",
 						Properties: map[string]Property{
 							"query": {
 								Type:        "STRING",
-								Description: "The search query to find code in the repository. Can be a function name, type name, variable name, or a code snippet.",
+								Description: "The search query to find code in the repository. Can be a function name, type name, variable name, or a code snippet. Supports filters like 'filename:', 'path:', 'extension:' and wildcards ('*'), e.g. 'handleRequest filename:*.go'.",
 							},
 							"branch": {
 								Type:        "STRING",
@@ -387,6 +436,28 @@ func extractStringArg(args map[string]interface{}, keys ...string) string {
 	return ""
 }
 
+func truncate(s string, maxBytes int) string {
+	if len(s) <= maxBytes {
+		return s
+	}
+	return s[:maxBytes] + "\n... [truncated]"
+}
+
+func parseOutput(result string) PluginOutput {
+	trimmed := strings.TrimSpace(result)
+	trimmed = strings.TrimPrefix(trimmed, "```json")
+	trimmed = strings.TrimPrefix(trimmed, "```")
+	trimmed = strings.TrimSuffix(trimmed, "```")
+	trimmed = strings.TrimSpace(trimmed)
+
+	output := PluginOutput{}
+	if err := json.Unmarshal([]byte(trimmed), &output); err != nil {
+		return PluginOutput{Comment: result}
+	}
+
+	return output
+}
+
 func handleFunctionCall(fnCall *FunctionCall, defaultBranch string) *FunctionResponse {
 	switch fnCall.Name {
 	case "get_git_file":
@@ -408,9 +479,10 @@ func handleFunctionCall(fnCall *FunctionCall, defaultBranch string) *FunctionRes
 				Response: map[string]interface{}{"error": fmt.Sprintf("failed to get file %s on branch %s: %s", filePath, branch, err.Error())},
 			}
 		}
+		content := truncate(string(fileData), maxToolResultBytes)
 		return &FunctionResponse{
 			Name:     fnCall.Name,
-			Response: map[string]interface{}{"content": string(fileData)},
+			Response: map[string]interface{}{"content": content},
 		}
 
 	case "search_code":

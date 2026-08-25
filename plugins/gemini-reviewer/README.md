@@ -9,7 +9,7 @@ The Gemini Reviewer is a WebAssembly (WASM) plugin that integrates with the merg
 ## Features
 
 -   **Automated Code Reviews**: Analyzes diffs in merge requests and provides comprehensive feedback.
--   **Autonomous Agent Loop & Tool Calling**: Gemini can request full file contents via the host function `get_git_file` if more context is needed beyond the diff.
+-   **Autonomous Agent Loop & Tool Calling**: Gemini can call the host functions `get_git_file` (full file content), `search_code` (repository search, up to 100 results), and `fetch_web_content` (documentation from approved domains) when it needs more context than the diff.
 -   **Configurable**: The plugin can be configured with different models, prompts, endpoints, and agent turn limits.
 -   **Secure**: API keys are handled as secrets.
 

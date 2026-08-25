@@ -38,7 +38,7 @@ func TestGetGitFileToolParams(t *testing.T) {
 	}
 
 	if getGitFileDecl.Parameters == nil || getGitFileDecl.Parameters.Type != "OBJECT" {
-		t.Errorf("expected parameter type 'OBJECT', got '%v'", getGitFileDecl.Parameters)
+		t.Fatalf("expected parameter type 'OBJECT', got '%v'", getGitFileDecl.Parameters)
 	}
 
 	if _, ok := getGitFileDecl.Parameters.Properties["file_path"]; !ok {
