@@ -8,10 +8,18 @@ on:
 
 jobs:
   test:
+    # This job builds and runs pull-request code, so it gets no more than it
+    # needs: a read-only token, and no credential left behind in .git/config
+    # for that code to pick up.
+    permissions:
+      contents: read
+
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Set up Go 1.x
         uses: actions/setup-go@v6
