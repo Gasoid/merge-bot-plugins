@@ -19,11 +19,19 @@ vars:
     type:
     - env
     - config
-  - name: claude_reviewer_max_tokens
+  - name: claude_reviewer_max_tokens # 4096 is default
     type:
     - env
     - config
-  - name: claude_reviewer_anthropic_version
+  - name: claude_reviewer_anthropic_version # 2023-06-01 is default
+    type:
+    - env
+    - config
+  - name: claude_reviewer_max_turns # 20 is default
+    type:
+    - env
+    - config
+  - name: claude_reviewer_max_retries # 5 is default
     type:
     - env
     - config
