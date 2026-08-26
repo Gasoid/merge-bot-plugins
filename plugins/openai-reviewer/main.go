@@ -46,13 +46,18 @@ func Review() int32 {
 	maxTurns := shared.ParseIntVar(input.Vars, "reviewer_max_turns", shared.DefaultMaxTurns, 1)
 	maxRetries := shared.ParseIntVar(input.Vars, "reviewer_max_retries", shared.DefaultMaxRetries, 0)
 
+	reasoningEffort, ok := input.Vars["reviewer_reasoning_effort"]
+	if !ok {
+		reasoningEffort = ""
+	}
+
 	fullPrompt, defaultBranch, err := shared.BuildPrompt(input, prompt)
 	if err != nil {
 		pdk.SetError(err)
 		return 1
 	}
 
-	result, err := review(fullPrompt, endpoint, apiKey, model, defaultBranch, maxTurns, maxRetries)
+	result, err := review(fullPrompt, endpoint, apiKey, model, defaultBranch, maxTurns, maxRetries, reasoningEffort)
 	if err != nil {
 		pdk.SetError(err)
 		return 1
@@ -107,9 +112,10 @@ type FunctionCall struct {
 }
 
 type OpenAIRequest struct {
-	Model    string          `json:"model"`
-	Messages []OpenAIMessage `json:"messages"`
-	Tools    []OpenAITool    `json:"tools,omitempty"`
+	Model           string          `json:"model"`
+	Messages        []OpenAIMessage `json:"messages"`
+	Tools           []OpenAITool    `json:"tools,omitempty"`
+	ReasoningEffort string          `json:"reasoning_effort,omitempty"`
 }
 
 type OpenAIResponse struct {
@@ -162,7 +168,7 @@ func handleFunctionCall(fnCall *FunctionCall, defaultBranch string) string {
 	return string(b)
 }
 
-func review(initialPrompt, endpoint, apiKey, model, defaultBranch string, maxTurns, maxRetries int) (string, error) {
+func review(initialPrompt, endpoint, apiKey, model, defaultBranch string, maxTurns, maxRetries int, reasoningEffort string) (string, error) {
 	toolDefs := tools()
 
 	messages := []OpenAIMessage{
@@ -181,6 +187,11 @@ func review(initialPrompt, endpoint, apiKey, model, defaultBranch string, maxTur
 		}
 		if turn < maxTurns-1 {
 			req.Tools = toolDefs
+			if reasoningEffort != "" {
+				req.ReasoningEffort = reasoningEffort
+			} else {
+				req.ReasoningEffort = "none"
+			}
 		}
 
 		b, err := json.Marshal(req)
