@@ -8,8 +8,9 @@ The OpenAI Reviewer is a WebAssembly (WASM) plugin that integrates with the merg
 
 ## Features
 
--   **Automated Code Reviews**: Analyzes diffs in merge requests and provides feedback.
--   **Configurable**: The plugin can be configured with different models, prompts, and endpoints.
+-   **Automated Code Reviews**: Analyzes diffs in merge requests and provides comprehensive feedback with inline thread comments.
+-   **Autonomous Agent Loop & Tool Calling**: OpenAI can call the host functions `get_git_file` (full file content), `search_code` (repository search, up to 100 results), `fetch_web_content` (documentation from approved domains), and `get_ci_failed_jobs` (failed CI job logs) when it needs more context than the diff.
+-   **Configurable**: The plugin can be configured with different models, prompts, endpoints, and agent turn limits.
 -   **Secure**: API keys are handled as secrets.
 
 ## Configuration
@@ -21,9 +22,20 @@ The following variables can be used to configure the plugin:
 | Name                         | Description                                                                 | Type          | Default Value |
 | ---------------------------- | --------------------------------------------------------------------------- | ------------- | ------------- |
 | `reviewer_api_key`    | Your OpenAI API key.                                                 | `env`, `secret` | (none)        |
-| `reviewer_endpoint`   | The endpoint for the OpenAI API.                                            | `env`, `secret` | (see code)    |
+| `reviewer_endpoint`   | The endpoint for the OpenAI API.                                            | `env`, `secret` | https://api.openai.com/v1/chat/completions |
 | `reviewer_model`      | The OpenAI model to use for the review.                                     | `env`, `config` | `gpt-5.1-codex-mini`  |
 | `reviewer_prompt`     | A custom prompt to use for the review.                                      | `env`, `config` | (see code)    |
+| `reviewer_max_turns`  | Maximum tool-calling conversation turns in the agent loop.                  | `env`, `config` | `20`           |
+| `reviewer_max_retries`| Maximum retry attempts on transient errors (503, 429, 5xx) with backoff.   | `env`, `config` | `5`           |
+
+## Build
+
+To compile the plugin to WebAssembly:
+
+```bash
+cd plugins/openai-reviewer
+GOOS="wasip1" GOARCH="wasm" go build -o ../../openai-plugin.wasm -buildmode=c-shared main.go
+```
 
 ## Usage
 

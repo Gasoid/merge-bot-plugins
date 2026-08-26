@@ -3,6 +3,8 @@ package main
 import (
 	"encoding/json"
 	"testing"
+
+	shared "github.com/gasoid/merge-bot-plugins/plugins/shared"
 )
 
 func TestTools(t *testing.T) {
@@ -85,9 +87,9 @@ func TestExtractFilePath(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := extractStringArg(tt.args, "file_path", "filePath", "path")
+			got := shared.ExtractStringArg(tt.args, "file_path", "filePath", "path")
 			if got != tt.expected {
-				t.Errorf("extractStringArg() = %v, want %v", got, tt.expected)
+				t.Errorf("ExtractStringArg() = %v, want %v", got, tt.expected)
 			}
 		})
 	}
@@ -128,7 +130,7 @@ func TestExtractBranch(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			branch := extractStringArg(tt.args, "branch", "ref")
+			branch := shared.ExtractStringArg(tt.args, "branch", "ref")
 			if branch == "" {
 				branch = tt.defaultBranch
 			}
@@ -261,11 +263,11 @@ func TestGeminiResponseParsing(t *testing.T) {
 	if part.FunctionCall.Name != "get_git_file" {
 		t.Errorf("expected name 'get_git_file', got '%s'", part.FunctionCall.Name)
 	}
-	filePath := extractStringArg(part.FunctionCall.Args, "file_path", "filePath", "path")
+	filePath := shared.ExtractStringArg(part.FunctionCall.Args, "file_path", "filePath", "path")
 	if filePath != "pkg/handlers/provider.go" {
 		t.Errorf("expected path 'pkg/handlers/provider.go', got '%v'", part.FunctionCall.Args)
 	}
-	branch := extractStringArg(part.FunctionCall.Args, "branch", "ref")
+	branch := shared.ExtractStringArg(part.FunctionCall.Args, "branch", "ref")
 	if branch == "" {
 		branch = "feature"
 	}
@@ -404,7 +406,7 @@ func TestParseOutputWithThreads(t *testing.T) {
 		]
 	}`
 
-	output := parseOutput(result)
+	output := shared.ParseOutput(result)
 	if output.Comment != "Looks good overall" {
 		t.Errorf("expected comment 'Looks good overall', got '%s'", output.Comment)
 	}
@@ -424,7 +426,7 @@ func TestParseOutputWithThreads(t *testing.T) {
 }
 
 func TestParseOutputPlainText(t *testing.T) {
-	output := parseOutput("This is a plain text review, not JSON.")
+	output := shared.ParseOutput("This is a plain text review, not JSON.")
 	if output.Comment != "This is a plain text review, not JSON." {
 		t.Errorf("expected plain text comment, got '%s'", output.Comment)
 	}
@@ -435,7 +437,7 @@ func TestParseOutputPlainText(t *testing.T) {
 
 func TestParseOutputCodeFence(t *testing.T) {
 	result := "```json\n{\"comment\": \"wrapped\"}\n```"
-	output := parseOutput(result)
+	output := shared.ParseOutput(result)
 	if output.Comment != "wrapped" {
 		t.Errorf("expected comment 'wrapped', got '%s'", output.Comment)
 	}
@@ -443,7 +445,7 @@ func TestParseOutputCodeFence(t *testing.T) {
 
 func TestParseOutputBackticksInBody(t *testing.T) {
 	result := "```json\n{\"comment\": \"use `code` fences\"}\n```"
-	output := parseOutput(result)
+	output := shared.ParseOutput(result)
 	if output.Comment != "use `code` fences" {
 		t.Errorf("expected comment 'use `code` fences', got '%s'", output.Comment)
 	}
@@ -451,7 +453,7 @@ func TestParseOutputBackticksInBody(t *testing.T) {
 
 func TestParseOutputPlainBacktickFence(t *testing.T) {
 	result := "```\n{\"comment\": \"no lang\"}\n```"
-	output := parseOutput(result)
+	output := shared.ParseOutput(result)
 	if output.Comment != "no lang" {
 		t.Errorf("expected comment 'no lang', got '%s'", output.Comment)
 	}
@@ -474,9 +476,9 @@ func TestCountLines(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := countLines(tt.input)
+			got := shared.CountLines(tt.input)
 			if got != tt.expected {
-				t.Errorf("countLines(%q) = %d, want %d", tt.input, got, tt.expected)
+				t.Errorf("CountLines(%q) = %d, want %d", tt.input, got, tt.expected)
 			}
 		})
 	}
@@ -495,7 +497,7 @@ func TestTruncate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := truncate(tt.input, tt.maxBytes)
+			got := shared.Truncate(tt.input, tt.maxBytes)
 			if tt.name == "no truncation" && got != tt.input {
 				t.Errorf("expected no truncation, got %q", got)
 			}
@@ -511,7 +513,7 @@ func TestTruncate(t *testing.T) {
 
 func TestTruncateUTF8(t *testing.T) {
 	input := "héllo wörld"
-	got := truncate(input, 4)
+	got := shared.Truncate(input, 4)
 
 	if len(got) > 0 {
 		cut := got
