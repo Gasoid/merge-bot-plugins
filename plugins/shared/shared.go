@@ -70,10 +70,25 @@ type CIFailedJobsResult struct {
 }
 
 type CIFailedJob struct {
-	Log   []byte `json:"log"`
+	Log   string `json:"log"`
 	ID    int64  `json:"job_id"`
 	Name  string `json:"job_name"`
 	Stage string `json:"stage"`
+}
+
+func (j *CIFailedJob) UnmarshalJSON(data []byte) error {
+	type Alias CIFailedJob
+	aux := &struct {
+		Log []byte `json:"log"`
+		*Alias
+	}{
+		Alias: (*Alias)(j),
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	j.Log = string(aux.Log)
+	return nil
 }
 
 func CallHost(name string, params interface{}, result interface{}) error {
