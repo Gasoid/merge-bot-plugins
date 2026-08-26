@@ -7,14 +7,27 @@ import (
 	"strings"
 
 	"github.com/extism/go-pdk"
+	"github.com/gasoid/merge-bot-plugins/plugins/claude-reviewer/internal/wire"
 	shared "github.com/gasoid/merge-bot-plugins/plugins/shared"
 )
 
 const (
-	defaultModel            = "claude-3-5-sonnet-20240620"
-	defaultEndpoint         = "https://api.anthropic.com/v1/messages"
-	defaultMaxTokens        = 4096
+	defaultModel    = "claude-sonnet-5"
+	defaultEndpoint = "https://api.anthropic.com/v1/messages"
+	// max_tokens caps thinking plus response text, and current models think by
+	// default, so this needs room for both. Kept under ~16k because the request
+	// is not streamed.
+	defaultMaxTokens        = 16000
 	defaultAnthropicVersion = "2023-06-01"
+	// A tool-capable turn plus a final answer turn is the shortest run that can
+	// use the tools the prompt advertises.
+	minMaxTurns = 2
+	// Below this there is no room for thinking plus a structured review, so the
+	// run would only ever stop on max_tokens. The floor sits above the 4096 this
+	// plugin used to document as its default, so configs pinned to the old value
+	// fall back to defaultMaxTokens instead of failing every review once the
+	// model started thinking by default.
+	minMaxTokens = 8192
 )
 
 //go:wasmexport review
@@ -46,15 +59,15 @@ func Review() int32 {
 		endpoint = defaultEndpoint
 	}
 
-	maxTokens := shared.ParseIntVar(input.Vars, "claude_reviewer_max_tokens", defaultMaxTokens, 1)
+	maxTokens := shared.ParseIntVar(input.Vars, "claude_reviewer_max_tokens", defaultMaxTokens, minMaxTokens)
 
 	anthropicVersion, ok := input.Vars["claude_reviewer_anthropic_version"]
 	if !ok {
 		anthropicVersion = defaultAnthropicVersion
 	}
 
-	maxTurns := shared.ParseIntVar(input.Vars, "claude_reviewer_max_turns", shared.DefaultMaxTurns, 1)
-	maxRetries := shared.ParseIntVar(input.Vars, "claude_reviewer_max_retries", shared.DefaultMaxRetries, 0)
+	maxTurns := shared.ParseIntVarRange(input.Vars, "claude_reviewer_max_turns", shared.DefaultMaxTurns, minMaxTurns, shared.MaxAllowedTurns)
+	maxRetries := shared.ParseIntVarRange(input.Vars, "claude_reviewer_max_retries", shared.DefaultMaxRetries, 0, shared.MaxAllowedRetries)
 
 	fullPrompt, defaultBranch, err := shared.BuildPrompt(input, prompt)
 	if err != nil {
@@ -75,67 +88,18 @@ func Review() int32 {
 	return 0
 }
 
-type ClaudeRequest struct {
-	Model     string       `json:"model"`
-	MaxTokens int          `json:"max_tokens"`
-	Messages  []Message    `json:"messages"`
-	System    string       `json:"system,omitempty"`
-	Tools     []ClaudeTool `json:"tools,omitempty"`
-}
-
-type Message struct {
-	Role    string         `json:"role"`
-	Content []ContentBlock `json:"content"`
-}
-
-type ContentBlock struct {
-	Type      string                 `json:"type"`
-	Text      string                 `json:"text,omitempty"`
-	ID        string                 `json:"id,omitempty"`
-	Name      string                 `json:"name,omitempty"`
-	Input     map[string]interface{} `json:"input,omitempty"`
-	ToolUseID string                 `json:"tool_use_id,omitempty"`
-	Content   string                 `json:"content,omitempty"`
-}
-
-type ClaudeTool struct {
-	Name        string      `json:"name"`
-	Description string      `json:"description"`
-	InputSchema InputSchema `json:"input_schema"`
-}
-
-type InputSchema struct {
-	Type       string              `json:"type"`
-	Properties map[string]Property `json:"properties"`
-	Required   []string            `json:"required,omitempty"`
-}
-
-type Property struct {
-	Type        string `json:"type"`
-	Description string `json:"description,omitempty"`
-}
-
-type ClaudeResponse struct {
-	ID         string         `json:"id"`
-	Type       string         `json:"type"`
-	Role       string         `json:"role"`
-	Model      string         `json:"model"`
-	Content    []ContentBlock `json:"content"`
-	StopReason string         `json:"stop_reason"`
-}
-
-func tools() []ClaudeTool {
+func tools() []wire.Tool {
 	defs := shared.Tools()
-	claudeTools := make([]ClaudeTool, 0, len(defs))
+	claudeTools := make([]wire.Tool, 0, len(defs))
 	for _, d := range defs {
-		props := make(map[string]Property, len(d.Parameters.Properties))
+		props := make(map[string]wire.Property, len(d.Parameters.Properties))
 		for k, p := range d.Parameters.Properties {
-			props[k] = Property{Type: p.Type, Description: p.Description}
+			props[k] = wire.Property{Type: p.Type, Description: p.Description}
 		}
-		claudeTools = append(claudeTools, ClaudeTool{
+		claudeTools = append(claudeTools, wire.Tool{
 			Name:        d.Name,
 			Description: d.Description,
-			InputSchema: InputSchema{
+			InputSchema: wire.InputSchema{
 				Type:       d.Parameters.Type,
 				Properties: props,
 				Required:   d.Parameters.Required,
@@ -148,10 +112,10 @@ func tools() []ClaudeTool {
 func review(initialPrompt, endpoint, apiKey, model, anthropicVersion, defaultBranch string, maxTokens, maxTurns, maxRetries int) (string, error) {
 	toolDefs := tools()
 
-	messages := []Message{
+	messages := []wire.Message{
 		{
 			Role: "user",
-			Content: []ContentBlock{
+			Content: []wire.ContentBlock{
 				{
 					Type: "text",
 					Text: initialPrompt,
@@ -160,16 +124,19 @@ func review(initialPrompt, endpoint, apiKey, model, anthropicVersion, defaultBra
 		},
 	}
 
-	var latestText string
-
 	for turn := 0; turn < maxTurns; turn++ {
-		req := ClaudeRequest{
+		req := wire.Request{
 			Model:     model,
 			MaxTokens: maxTokens,
 			Messages:  messages,
+			Tools:     toolDefs,
 		}
-		if turn < maxTurns-1 {
-			req.Tools = toolDefs
+		// tools must stay on every request: once the history holds tool_use and
+		// tool_result blocks, the API rejects a request that omits it. Forbid
+		// further tool calls on the final turn with tool_choice instead, so the
+		// model has to produce its answer.
+		if turn == maxTurns-1 {
+			req.ToolChoice = &wire.ToolChoice{Type: "none"}
 		}
 
 		b, err := json.Marshal(req)
@@ -186,7 +153,7 @@ func review(initialPrompt, endpoint, apiKey, model, anthropicVersion, defaultBra
 			return "", err
 		}
 
-		var claudeResp ClaudeResponse
+		var claudeResp wire.Response
 		if err := json.Unmarshal(resp.Body(), &claudeResp); err != nil {
 			return "", fmt.Errorf("failed to parse Claude response: %w", err)
 		}
@@ -195,11 +162,15 @@ func review(initialPrompt, endpoint, apiKey, model, anthropicVersion, defaultBra
 			return "", fmt.Errorf("response truncated: max_tokens (%d) reached, increase claude_reviewer_max_tokens", maxTokens)
 		}
 
-		var toolUseBlocks []ContentBlock
+		var toolUseBlocks []wire.ContentBlock
 		var textParts []string
 
 		for _, block := range claudeResp.Content {
-			if block.Type == "tool_use" && block.Name != "" {
+			// Every tool_use block needs a matching tool_result in the next turn,
+			// including a malformed one: the whole response is echoed back, and
+			// the API rejects a tool_use with no result. shared.ExecuteTool
+			// answers an unknown name with an error result.
+			if block.Type == "tool_use" {
 				toolUseBlocks = append(toolUseBlocks, block)
 			}
 			if block.Type == "text" && block.Text != "" {
@@ -207,44 +178,39 @@ func review(initialPrompt, endpoint, apiKey, model, anthropicVersion, defaultBra
 			}
 		}
 
-		if len(textParts) > 0 {
-			latestText = strings.Join(textParts, "\n")
-		}
-
+		// Only text from a turn that made no tool calls is an answer. Text
+		// alongside a tool_use is a preamble ("I'll fetch that file first"), and
+		// returning it would have the bot post a preamble as its review.
 		if len(toolUseBlocks) == 0 {
-			if latestText != "" {
-				return latestText, nil
+			if len(textParts) > 0 {
+				return strings.Join(textParts, "\n"), nil
 			}
 			return "", errors.New("model returned neither text nor tool use")
 		}
 
-		messages = append(messages, Message{
+		messages = append(messages, wire.Message{
 			Role:    "assistant",
 			Content: claudeResp.Content,
 		})
 
-		var toolResultBlocks []ContentBlock
+		var toolResultBlocks []wire.ContentBlock
 		for _, block := range toolUseBlocks {
 			result := shared.ExecuteTool(block.Name, block.Input, defaultBranch)
 			resultJSON, err := json.Marshal(result)
 			if err != nil {
 				return "", err
 			}
-			toolResultBlocks = append(toolResultBlocks, ContentBlock{
+			toolResultBlocks = append(toolResultBlocks, wire.ContentBlock{
 				Type:      "tool_result",
 				ToolUseID: block.ID,
 				Content:   string(resultJSON),
 			})
 		}
 
-		messages = append(messages, Message{
+		messages = append(messages, wire.Message{
 			Role:    "user",
 			Content: toolResultBlocks,
 		})
-	}
-
-	if latestText != "" {
-		return latestText, nil
 	}
 
 	return "", fmt.Errorf("agent reached max turns (%d) without completing review", maxTurns)

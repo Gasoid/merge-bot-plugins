@@ -11,7 +11,7 @@ vars:
     type:
     - env
     - secret
-  - name: claude_reviewer_model # claude-3-5-sonnet-20240620 is default
+  - name: claude_reviewer_model # claude-sonnet-5 is default
     type:
     - env
     - config
@@ -19,7 +19,7 @@ vars:
     type:
     - env
     - config
-  - name: claude_reviewer_max_tokens # 4096 is default
+  - name: claude_reviewer_max_tokens # 16000 is default, values below 8192 fall back to it
     type:
     - env
     - config
@@ -27,7 +27,7 @@ vars:
     type:
     - env
     - config
-  - name: claude_reviewer_max_turns # 20 is default
+  - name: claude_reviewer_max_turns # 20 is default, values below 2 fall back to it
     type:
     - env
     - config

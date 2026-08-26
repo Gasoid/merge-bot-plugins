@@ -43,8 +43,8 @@ func Review() int32 {
 		endpoint = defaultEndpoint
 	}
 
-	maxTurns := shared.ParseIntVar(input.Vars, "reviewer_max_turns", shared.DefaultMaxTurns, 1)
-	maxRetries := shared.ParseIntVar(input.Vars, "reviewer_max_retries", shared.DefaultMaxRetries, 0)
+	maxTurns := shared.ParseIntVarRange(input.Vars, "reviewer_max_turns", shared.DefaultMaxTurns, 1, shared.MaxAllowedTurns)
+	maxRetries := shared.ParseIntVarRange(input.Vars, "reviewer_max_retries", shared.DefaultMaxRetries, 0, shared.MaxAllowedRetries)
 
 	reasoningEffort, ok := input.Vars["reviewer_reasoning_effort"]
 	if !ok {

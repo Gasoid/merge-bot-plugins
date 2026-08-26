@@ -23,11 +23,11 @@ The following variables can be used to configure the plugin:
 | ----------------------------------- | ------------------------------------------------------------------------- | -------------- | ------------------------------------------ |
 | `claude_reviewer_api_key`           | Your Anthropic Claude API key.                                            | `env`, `secret` | (none)                                     |
 | `claude_reviewer_endpoint`          | The endpoint for the Claude API.                                          | `env`, `secret` | `https://api.anthropic.com/v1/messages`    |
-| `claude_reviewer_model`             | The Claude model to use for the review.                                   | `env`, `config` | `claude-3-5-sonnet-20240620`               |
+| `claude_reviewer_model`             | The Claude model to use for the review.                                   | `env`, `config` | `claude-sonnet-5`                          |
 | `claude_reviewer_prompt`            | A custom prompt to use for the review.                                    | `env`, `config` | (see code)                                 |
-| `claude_reviewer_max_tokens`        | The maximum number of tokens to generate in the response.                 | `env`, `config` | `4096`                                     |
+| `claude_reviewer_max_tokens`        | Max tokens to generate. Values below `8192` fall back to the default.     | `env`, `config` | `16000`                                    |
 | `claude_reviewer_anthropic_version` | The Anthropic API version to use.                                         | `env`, `config` | `2023-06-01`                               |
-| `claude_reviewer_max_turns`         | Maximum tool-calling conversation turns in the agent loop.                | `env`, `config` | `20`                                       |
+| `claude_reviewer_max_turns`         | Max agent-loop turns. Values below `2` fall back to the default.          | `env`, `config` | `20`                                       |
 | `claude_reviewer_max_retries`       | Maximum retry attempts on transient errors (503, 429, 5xx) with backoff.  | `env`, `config` | `5`                                        |
 
 ## Build
@@ -38,6 +38,22 @@ To compile the plugin to WebAssembly:
 cd plugins/claude-reviewer
 GOOS="wasip1" GOARCH="wasm" go build -o ../../claude-plugin.wasm -buildmode=c-shared main.go
 ```
+
+## Test
+
+`go test ./...` does not work from the repository root: every package that imports
+`github.com/extism/go-pdk` fails to build for the host, because the PDK's host
+functions have no bodies outside wasm. The JSON wire format lives in
+`internal/wire`, which imports only `encoding/json`, so it is host-testable:
+
+```bash
+go test ./plugins/claude-reviewer/internal/...
+```
+
+Tests in `main_test.go` are compile-checked only, via
+`GOOS="wasip1" GOARCH="wasm" go test -c -o /dev/null ./plugins/claude-reviewer/`.
+A wasip1 test binary compiles but cannot be executed by a plain wasm runtime,
+since it declares `extism:host/env` imports that runtime cannot resolve.
 
 ## Usage
 

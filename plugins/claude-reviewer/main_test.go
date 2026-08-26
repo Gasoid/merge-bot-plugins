@@ -1,9 +1,18 @@
+// Tests in this file are compile-checked only. Package main imports
+// github.com/extism/go-pdk, whose host functions have no bodies outside wasm, so
+// `go test` cannot build it for the host; and a wasip1/wasm test binary declares
+// extism:host/env imports that a plain wasm runtime cannot resolve, so it fails
+// to instantiate. CI runs `go test -c` here to keep them compiling.
+//
+// Assertions that need to actually execute belong in internal/wire, which
+// imports only encoding/json and runs under
+// `go test ./plugins/claude-reviewer/internal/...`.
 package main
 
 import (
-	"encoding/json"
 	"testing"
 
+	"github.com/gasoid/merge-bot-plugins/plugins/claude-reviewer/internal/wire"
 	shared "github.com/gasoid/merge-bot-plugins/plugins/shared"
 )
 
@@ -26,9 +35,8 @@ func TestTools(t *testing.T) {
 }
 
 func TestGetGitFileToolParams(t *testing.T) {
-	tools := tools()
-	var getGitFileTool ClaudeTool
-	for _, tool := range tools {
+	var getGitFileTool wire.Tool
+	for _, tool := range tools() {
 		if tool.Name == "get_git_file" {
 			getGitFileTool = tool
 			break
@@ -39,12 +47,10 @@ func TestGetGitFileToolParams(t *testing.T) {
 		t.Fatalf("expected input_schema type 'object', got '%s'", getGitFileTool.InputSchema.Type)
 	}
 
-	if _, ok := getGitFileTool.InputSchema.Properties["file_path"]; !ok {
-		t.Errorf("expected 'file_path' property in input_schema")
-	}
-
-	if _, ok := getGitFileTool.InputSchema.Properties["branch"]; !ok {
-		t.Errorf("expected 'branch' property in input_schema")
+	for _, prop := range []string{"file_path", "branch"} {
+		if _, ok := getGitFileTool.InputSchema.Properties[prop]; !ok {
+			t.Errorf("expected '%s' property in input_schema", prop)
+		}
 	}
 
 	if len(getGitFileTool.InputSchema.Required) != 1 || getGitFileTool.InputSchema.Required[0] != "file_path" {
@@ -52,100 +58,39 @@ func TestGetGitFileToolParams(t *testing.T) {
 	}
 }
 
-func TestClaudeRequestSerialization(t *testing.T) {
-	req := ClaudeRequest{
-		Model:     "claude-test",
-		MaxTokens: 4096,
-		Messages: []Message{
-			{
-				Role: "user",
-				Content: []ContentBlock{
-					{Type: "text", Text: "Please review this diff"},
-				},
-			},
-			{
-				Role: "assistant",
-				Content: []ContentBlock{
-					{Type: "tool_use", ID: "toolu_1", Name: "get_git_file", Input: map[string]interface{}{"file_path": "main.go", "branch": "main"}},
-				},
-			},
-			{
-				Role: "user",
-				Content: []ContentBlock{
-					{Type: "tool_result", ToolUseID: "toolu_1", Content: `{"content":"package main\n"}`},
-				},
-			},
-		},
-		Tools: tools(),
+// get_ci_failed_jobs takes no arguments. Anthropic needs an object schema with
+// an empty properties map here; Gemini instead needs the parameters block
+// omitted entirely, which is why the shared definition carries an empty map
+// rather than a nil one.
+func TestNoArgToolHasEmptyProperties(t *testing.T) {
+	var tool wire.Tool
+	for _, candidate := range tools() {
+		if candidate.Name == "get_ci_failed_jobs" {
+			tool = candidate
+			break
+		}
 	}
 
-	data, err := json.Marshal(req)
-	if err != nil {
-		t.Fatalf("failed to marshal ClaudeRequest: %v", err)
+	if tool.Name == "" {
+		t.Fatal("get_ci_failed_jobs not found")
 	}
-
-	var parsed map[string]interface{}
-	if err := json.Unmarshal(data, &parsed); err != nil {
-		t.Fatalf("failed to unmarshal JSON: %v", err)
+	if tool.InputSchema.Properties == nil {
+		t.Error("properties should be an empty map, not nil")
 	}
-
-	messages, ok := parsed["messages"].([]interface{})
-	if !ok || len(messages) != 3 {
-		t.Fatalf("expected 3 messages, got %v", messages)
-	}
-
-	toolsParsed, ok := parsed["tools"].([]interface{})
-	if !ok || len(toolsParsed) != 4 {
-		t.Fatalf("expected 4 tools, got %v", toolsParsed)
+	if len(tool.InputSchema.Properties) != 0 {
+		t.Errorf("expected no properties, got %v", tool.InputSchema.Properties)
 	}
 }
 
-func TestClaudeResponseParsing(t *testing.T) {
-	textJSON := `{
-		"id": "msg_1",
-		"type": "message",
-		"role": "assistant",
-		"model": "claude-test",
-		"content": [
-			{"type": "text", "text": "LGTM! Looks good to merge."}
-		],
-		"stop_reason": "end_turn"
-	}`
-
-	var resp1 ClaudeResponse
-	if err := json.Unmarshal([]byte(textJSON), &resp1); err != nil {
-		t.Fatalf("failed to unmarshal text response: %v", err)
+func TestToolArgExtraction(t *testing.T) {
+	block := wire.ContentBlock{
+		Type:  "tool_use",
+		ID:    "toolu_1",
+		Name:  "get_git_file",
+		Input: map[string]interface{}{"file_path": "pkg/handlers/provider.go"},
 	}
 
-	if len(resp1.Content) != 1 || resp1.Content[0].Text != "LGTM! Looks good to merge." {
-		t.Errorf("unexpected parsed content: %+v", resp1)
-	}
-
-	toolJSON := `{
-		"id": "msg_2",
-		"type": "message",
-		"role": "assistant",
-		"model": "claude-test",
-		"content": [
-			{"type": "tool_use", "id": "toolu_1", "name": "get_git_file", "input": {"file_path": "pkg/handlers/provider.go", "branch": "main"}}
-		],
-		"stop_reason": "tool_use"
-	}`
-
-	var resp2 ClaudeResponse
-	if err := json.Unmarshal([]byte(toolJSON), &resp2); err != nil {
-		t.Fatalf("failed to unmarshal tool use response: %v", err)
-	}
-
-	if len(resp2.Content) != 1 {
-		t.Fatalf("expected 1 content block, got %d", len(resp2.Content))
-	}
-	block := resp2.Content[0]
-	if block.Type != "tool_use" || block.Name != "get_git_file" || block.ID != "toolu_1" {
-		t.Errorf("unexpected tool_use block: %+v", block)
-	}
-	filePath := shared.ExtractStringArg(block.Input, "file_path", "filePath", "path")
-	if filePath != "pkg/handlers/provider.go" {
-		t.Errorf("expected path 'pkg/handlers/provider.go', got '%v'", block.Input)
+	if got := shared.ExtractStringArg(block.Input, "file_path", "filePath", "path"); got != "pkg/handlers/provider.go" {
+		t.Errorf("expected path 'pkg/handlers/provider.go', got '%s'", got)
 	}
 }

@@ -16,6 +16,10 @@ const (
 	DefaultInitialBackoff = 2 * time.Second
 	DefaultMaxTurns       = 20
 	DefaultMaxRetries     = 5
+	// Ceilings for the loop-driving vars. Anything higher is a
+	// misconfiguration rather than an intent, and each turn is a paid API call.
+	MaxAllowedTurns   = 50
+	MaxAllowedRetries = 10
 )
 
 const DefaultPrompt = `
@@ -281,11 +285,21 @@ func ParseOutput(result string) PluginOutput {
 	}
 
 	output := PluginOutput{}
-	if err := json.Unmarshal([]byte(trimmed), &output); err != nil {
-		return PluginOutput{Comment: result}
+	if err := json.Unmarshal([]byte(trimmed), &output); err == nil {
+		return output
 	}
 
-	return output
+	// Models often wrap the object in a sentence or two ("Here is my review:
+	// {...}"). Retry on the outermost braces before giving up, otherwise the
+	// inline thread comments are dropped and the raw text is posted instead.
+	if start, end := strings.Index(trimmed, "{"), strings.LastIndex(trimmed, "}"); start != -1 && end > start {
+		candidate := PluginOutput{}
+		if err := json.Unmarshal([]byte(trimmed[start:end+1]), &candidate); err == nil {
+			return candidate
+		}
+	}
+
+	return PluginOutput{Comment: result}
 }
 
 func CountLines(data string) int {
@@ -379,6 +393,18 @@ func SendHTTPRequestWithRetry(url string, headers map[string]string, body []byte
 	}
 
 	return resp, errors.New("request failed: max retries exceeded")
+}
+
+// ParseIntVarRange is ParseIntVar with an upper bound, for values that drive a
+// loop. Without a ceiling a mistyped max_turns spends real money on API calls
+// before anything notices. Out-of-range values fall back to def, matching
+// ParseIntVar.
+func ParseIntVarRange(vars map[string]string, key string, def, min, max int) int {
+	n := ParseIntVar(vars, key, def, min)
+	if n > max {
+		return def
+	}
+	return n
 }
 
 func ParseIntVar(vars map[string]string, key string, def, min int) int {
@@ -549,6 +575,15 @@ func ExecuteTool(name string, args map[string]interface{}, defaultBranch string)
 		jobs, err := GetCIFailedJobs()
 		if err != nil {
 			return map[string]interface{}{"error": fmt.Sprintf("failed to get CI failed jobs: %s", err.Error())}
+		}
+		// Logs are unbounded and there may be several failed jobs, so share the
+		// tool-result budget between them rather than returning everything and
+		// risking a request over the API's size limit.
+		if len(jobs) > 0 {
+			perJob := MaxToolResultBytes / len(jobs)
+			for i := range jobs {
+				jobs[i].Log = Truncate(jobs[i].Log, perJob)
+			}
 		}
 		return map[string]interface{}{"jobs": jobs}
 

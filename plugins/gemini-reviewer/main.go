@@ -44,8 +44,8 @@ func Review() int32 {
 		endpoint = defaultEndpoint
 	}
 
-	maxTurns := shared.ParseIntVar(input.Vars, "gemini_reviewer_max_turns", shared.DefaultMaxTurns, 1)
-	maxRetries := shared.ParseIntVar(input.Vars, "gemini_reviewer_max_retries", shared.DefaultMaxRetries, 0)
+	maxTurns := shared.ParseIntVarRange(input.Vars, "gemini_reviewer_max_turns", shared.DefaultMaxTurns, 1, shared.MaxAllowedTurns)
+	maxRetries := shared.ParseIntVarRange(input.Vars, "gemini_reviewer_max_retries", shared.DefaultMaxRetries, 0, shared.MaxAllowedRetries)
 
 	fullPrompt, defaultBranch, err := shared.BuildPrompt(input, prompt)
 	if err != nil {
@@ -148,16 +148,23 @@ func tools() []Tool {
 		for k, p := range d.Parameters.Properties {
 			props[k] = Property{Type: strings.ToUpper(p.Type), Description: p.Description}
 		}
+		// Gemini rejects an OBJECT schema with no properties, so a tool that
+		// takes no arguments must omit parameters altogether rather than send
+		// {"type":"OBJECT"}.
+		var params *Parameters
+		if len(props) > 0 {
+			params = &Parameters{
+				Type:       strings.ToUpper(d.Parameters.Type),
+				Properties: props,
+				Required:   d.Parameters.Required,
+			}
+		}
 		tools = append(tools, Tool{
 			FunctionDeclarations: []FunctionDeclaration{
 				{
 					Name:        d.Name,
 					Description: d.Description,
-					Parameters: &Parameters{
-						Type:       strings.ToUpper(d.Parameters.Type),
-						Properties: props,
-						Required:   d.Parameters.Required,
-					},
+					Parameters:  params,
 				},
 			},
 		})
