@@ -27,9 +27,13 @@ vars:
     type:
     - env
     - config
+  - name: reviewer_reasoning_effort # optional; defaults to 'none' when tools are used
+    type:
+    - env
+    - config
 
 wasm_config:
   exported_function: "review"
-  url: "https://github.com/Gasoid/merge-bot-plugins/releases/download/v0.0.3-beta.2/openai-plugin.wasm"
+  url: "https://github.com/Gasoid/merge-bot-plugins/releases/download/v0.0.3-beta.4/openai-plugin.wasm"
   allowed_hosts:
   - "api.openai.com"
