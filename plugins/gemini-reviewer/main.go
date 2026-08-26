@@ -22,6 +22,7 @@ You have access to tools to gather additional context for a thorough review:
 - "get_git_file" — fetch the full content of any file from the repository.
 - "search_code" — search for code patterns across the repository, results are limited to 100.
 - "fetch_web_content" — fetch documentation or web resources (limited to approved domains and their subdomains: pkg.go.dev, docs.python.org, developer.mozilla.org, golang.org).
+- "get_ci_failed_jobs" — fetch logs of failed CI jobs for this merge request.
 Use these tools only when necessary, and provide your complete review as soon as you have gathered sufficient information.
 
 ## Output format
@@ -282,6 +283,14 @@ func tools() []Tool {
 				},
 			},
 		},
+		{
+			FunctionDeclarations: []FunctionDeclaration{
+				{
+					Name:        "get_ci_failed_jobs",
+					Description: "Fetch logs of failed CI/CD jobs for the current merge request. Returns each failed job's name, stage, ID, and recent log output (up to 200 lines). Use this to understand why CI pipelines are failing.",
+				},
+			},
+		},
 	}
 }
 
@@ -354,6 +363,19 @@ func handleFunctionCall(fnCall *FunctionCall, defaultBranch string) *FunctionRes
 		return &FunctionResponse{
 			Name:     fnCall.Name,
 			Response: map[string]interface{}{"content": content},
+		}
+
+	case "get_ci_failed_jobs":
+		jobs, err := shared.GetCIFailedJobs()
+		if err != nil {
+			return &FunctionResponse{
+				Name:     fnCall.Name,
+				Response: map[string]interface{}{"error": fmt.Sprintf("failed to get CI failed jobs: %s", err.Error())},
+			}
+		}
+		return &FunctionResponse{
+			Name:     fnCall.Name,
+			Response: map[string]interface{}{"jobs": jobs},
 		}
 
 	default:

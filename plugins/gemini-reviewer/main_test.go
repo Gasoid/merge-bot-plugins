@@ -9,8 +9,8 @@ import (
 
 func TestTools(t *testing.T) {
 	tools := tools()
-	if len(tools) != 3 {
-		t.Fatalf("expected 3 tools, got %d", len(tools))
+	if len(tools) != 4 {
+		t.Fatalf("expected 4 tools, got %d", len(tools))
 	}
 
 	names := map[string]bool{}
@@ -20,7 +20,7 @@ func TestTools(t *testing.T) {
 		}
 	}
 
-	for _, name := range []string{"get_git_file", "search_code", "fetch_web_content"} {
+	for _, name := range []string{"get_git_file", "search_code", "fetch_web_content", "get_ci_failed_jobs"} {
 		if !names[name] {
 			t.Errorf("expected tool '%s' not found", name)
 		}
@@ -197,8 +197,8 @@ func TestGeminiRequestSerialization(t *testing.T) {
 	}
 
 	toolsParsed, ok := parsed["tools"].([]interface{})
-	if !ok || len(toolsParsed) != 3 {
-		t.Fatalf("expected 3 tools, got %v", toolsParsed)
+	if !ok || len(toolsParsed) != 4 {
+		t.Fatalf("expected 4 tools, got %v", toolsParsed)
 	}
 }
 
