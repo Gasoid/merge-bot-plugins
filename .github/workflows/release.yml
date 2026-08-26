@@ -29,6 +29,9 @@ jobs:
 
       - name: Build claude
         run: GOOS="wasip1" GOARCH="wasm" go build -o claude-plugin.wasm -buildmode=c-shared plugins/claude-reviewer/main.go
+
+      - name: Substitute WASM URLs with release version
+        run: sed -i "s|/download/v[^/]*/|/download/${{ github.ref_name }}/|g" plugins/*-reviewer/*.yaml
       
       - run: go install github.com/git-chglog/git-chglog/cmd/git-chglog@latest
       - run: git-chglog -o release.txt ${{ github.ref_name }}
