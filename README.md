@@ -21,7 +21,7 @@ To use a plugin, you need to configure your Merge-Bot instance by setting the `P
 For example, to install the **OpenAI Reviewer** plugin, you would set the following environment variables:
 
 ```bash
-export PLUGINS="https://github.com/Gasoid/merge-bot-plugins/releases/download/v0.0.2/openai-reviewer.yaml"
+export PLUGINS="https://github.com/Gasoid/merge-bot-plugins/releases/download/v0.0.3-beta.2/openai-reviewer.yaml"
 export REVIEWER_API_KEY="your_openai_api_key"
 ```
 
