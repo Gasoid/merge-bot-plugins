@@ -191,6 +191,10 @@ func review(initialPrompt, endpoint, apiKey, model, anthropicVersion, defaultBra
 			return "", fmt.Errorf("failed to parse Claude response: %w", err)
 		}
 
+		if claudeResp.StopReason == "max_tokens" {
+			return "", fmt.Errorf("response truncated: max_tokens (%d) reached, increase claude_reviewer_max_tokens", maxTokens)
+		}
+
 		var toolUseBlocks []ContentBlock
 		var textParts []string
 
