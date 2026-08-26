@@ -10,6 +10,8 @@ The OpenAI Reviewer is a WebAssembly (WASM) plugin that integrates with the merg
 
 -   **Automated Code Reviews**: Analyzes diffs in merge requests and provides comprehensive feedback with inline thread comments.
 -   **Autonomous Agent Loop & Tool Calling**: OpenAI can call the host functions `get_git_file` (full file content), `search_code` (repository search, up to 100 results), `fetch_web_content` (documentation from approved domains), and `get_ci_failed_jobs` (failed CI job logs) when it needs more context than the diff.
+
+> **Note for reasoning models** (e.g. `gpt-5.x` variants): the `chat/completions` endpoint rejects function tools when `reasoning_effort` is set. The plugin therefore defaults `reasoning_effort` to `none` on tool-calling turns (override with `reviewer_reasoning_effort`).
 -   **Configurable**: The plugin can be configured with different models, prompts, endpoints, and agent turn limits.
 -   **Secure**: API keys are handled as secrets.
 
@@ -27,6 +29,7 @@ The following variables can be used to configure the plugin:
 | `reviewer_prompt`     | A custom prompt to use for the review.                                      | `env`, `config` | (see code)    |
 | `reviewer_max_turns`  | Maximum tool-calling conversation turns in the agent loop.                  | `env`, `config` | `20`           |
 | `reviewer_max_retries`| Maximum retry attempts on transient errors (503, 429, 5xx) with backoff.   | `env`, `config` | `5`           |
+| `reviewer_reasoning_effort` | Reasoning effort for models that support it. When tools are used, defaults to `none` so reasoning models work on `/v1/chat/completions`. | `env`, `config` | `none` (when tools are used) |
 
 ## Build
 

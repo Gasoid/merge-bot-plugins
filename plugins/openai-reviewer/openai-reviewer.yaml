@@ -27,6 +27,10 @@ vars:
     type:
     - env
     - config
+  - name: reviewer_reasoning_effort # optional; defaults to 'none' when tools are used
+    type:
+    - env
+    - config
 
 wasm_config:
   exported_function: "review"
