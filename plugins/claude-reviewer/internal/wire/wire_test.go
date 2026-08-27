@@ -41,16 +41,21 @@ func TestToolUseBlockKeepsEmptyInput(t *testing.T) {
 			if !ok {
 				t.Fatalf("tool_use block dropped required 'input' field: %v", got)
 			}
-			if raw == nil {
-				t.Skip("nil input is expected to be nil")
-			}
+			// A JSON null decodes into interface{} as nil and would satisfy the
+			// presence check above, so the type assertion is what actually
+			// pins down "input": {} rather than "input": null.
 			args, ok := raw.(map[string]interface{})
 			if !ok {
-				t.Fatalf("'input' should encode as an object, got %T", raw)
+				t.Fatalf("'input' should encode as an object, got %T (%v)", raw, raw)
 			}
-			if name == "with args" {
+			switch name {
+			case "with args":
 				if args["job_id"] != float64(42) {
 					t.Errorf("expected job_id 42, got %v", args["job_id"])
+				}
+			case "nil map":
+				if len(args) != 0 {
+					t.Errorf("nil input should encode as an empty object, got %v", args)
 				}
 			}
 			for _, field := range []string{"id", "name"} {
