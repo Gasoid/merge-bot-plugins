@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  test:
+    # This job builds and runs pull-request code, so it gets no more than it
+    # needs: a read-only token, and no credential left behind in .git/config
+    # for that code to pick up.
+    permissions:
+      contents: read
+
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Go 1.x
+        uses: actions/setup-go@v6
+        with:
+          go-version: ^1.25
+        id: go
+
+      # Only packages that do not import github.com/extism/go-pdk can be built
+      # for the host, so these are the tests that actually execute.
+      - name: Test
+        run: go test ./plugins/claude-reviewer/internal/...
+
+      - name: Build plugins
+        run: |
+          for plugin in openai gemini claude; do
+            GOOS=wasip1 GOARCH=wasm go build -o "$plugin-plugin.wasm" \
+              -buildmode=c-shared "plugins/$plugin-reviewer/main.go"
+          done
+
+      - name: Vet
+        run: GOOS=wasip1 GOARCH=wasm go vet ./...
+
+      # The pdk-importing packages cannot run tests on the host, and their
+      # wasip1 test binaries declare extism host imports a plain wasm runtime
+      # cannot resolve. Compiling them at least keeps the assertions honest
+      # against type and API changes.
+      - name: Compile wasm tests
+        run: |
+          for plugin in gemini claude; do
+            GOOS=wasip1 GOARCH=wasm go test -c -o /dev/null "./plugins/$plugin-reviewer/"
+          done

@@ -11,7 +11,26 @@ jobs:
       contents: write
 
     runs-on: ubuntu-latest
+    env:
+      REF_NAME: ${{ github.ref_name }}
     steps:
+      # A tag name may contain shell and sed metacharacters, and the v*.*.*
+      # trigger glob does not exclude them. Passing the ref through the
+      # environment stops the shell from interpreting it, but it still ends up
+      # inside the sed program below, where a tag such as `v1.2.3$(id)|e;#`
+      # closes the replacement early and leaves `e` as the substitution flag --
+      # which makes GNU sed execute the pattern space as a shell command, in a
+      # job holding contents: write. Fail closed on anything that is not a
+      # plain release version. An anchored regex is required: the glob
+      # v[0-9]*.[0-9]*.[0-9]* would match that payload.
+      - name: Validate release tag
+        run: |
+          if ! printf '%s\n' "$REF_NAME" |
+              grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'; then
+            echo "refusing to release from unexpected tag name: $REF_NAME" >&2
+            exit 1
+          fi
+
       - name: Checkout
         uses: actions/checkout@v6
 
@@ -29,9 +48,17 @@ jobs:
 
       - name: Build claude
         run: GOOS="wasip1" GOARCH="wasm" go build -o claude-plugin.wasm -buildmode=c-shared plugins/claude-reviewer/main.go
-      
-      - run: go install github.com/git-chglog/git-chglog/cmd/git-chglog@latest
-      - run: git-chglog -o release.txt ${{ github.ref_name }}
+
+      # Safe because "Validate release tag" has restricted REF_NAME to
+      # [0-9A-Za-z.-], so it cannot alter the sed program.
+      - name: Substitute WASM URLs with release version
+        run: sed -i "s|/download/v[^/]*/|/download/$REF_NAME/|g" plugins/*-reviewer/*.yaml
+
+      # Pinned rather than @latest, which resolves at execution time and would
+      # let two releases be built by different versions of this tool.
+      - run: go install github.com/git-chglog/git-chglog/cmd/git-chglog@v0.15.4
+      - name: Generate changelog
+        run: git-chglog -o release.txt "$REF_NAME"
 
       - name: Release
         uses: softprops/action-gh-release@v2
