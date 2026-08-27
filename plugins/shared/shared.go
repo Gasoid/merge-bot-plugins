@@ -32,7 +32,7 @@ You have access to tools to gather additional context for a thorough review:
 - "get_git_file" — fetch the full content of any file from the repository.
 - "search_code" — search for code patterns across the repository, results are limited to 100.
 - "fetch_web_content" — fetch documentation or web resources (limited to approved domains and their subdomains: pkg.go.dev, docs.python.org, developer.mozilla.org, golang.org).
-- "get_ci_failed_jobs" — fetch logs of failed CI jobs for this merge request.
+- "get_ci_job_log" — fetch the log of a specific CI job by its ID (use ci_info.failed_jobs to find job IDs).
 Use these tools only when necessary, and provide your complete review as soon as you have gathered sufficient information.
 
 ## Output format
@@ -78,6 +78,28 @@ type PluginInput struct {
 	TargetBranch string            `json:"target_branch"`
 	Diffs        []byte            `json:"diffs"`
 	Vars         map[string]string `json:"vars"`
+	CIInfo       *CIInfo           `json:"ci_info,omitempty"`
+}
+
+type CIInfo struct {
+	PipelineStatus string    `json:"pipeline_status"`
+	FailedJobs     []JobRef  `json:"failed_jobs,omitempty"`
+	FailedTests    []TestRef `json:"failed_tests,omitempty"`
+}
+
+type JobRef struct {
+	Name         string `json:"name"`
+	Stage        string `json:"stage"`
+	ID           int64  `json:"id"`
+	AllowFailure bool   `json:"allow_failure"`
+}
+
+type TestRef struct {
+	Name      string `json:"name"`
+	Suite     string `json:"test_suite"`
+	Output    string `json:"output,omitempty"`
+	File      string `json:"file,omitempty"`
+	ClassName string `json:"classname,omitempty"`
 }
 
 type PluginOutput struct {
@@ -117,20 +139,20 @@ type FetchWebContentResult struct {
 	Content []byte `json:"content"`
 }
 
-type CIFailedJobsResult struct {
+type GetCIJobLogResult struct {
 	HostResult
-	Jobs []CIFailedJob `json:"jobs"`
+	Job *CIJobLog `json:"job"`
 }
 
-type CIFailedJob struct {
+type CIJobLog struct {
 	Log   string `json:"log"`
 	ID    int64  `json:"job_id"`
 	Name  string `json:"job_name"`
 	Stage string `json:"stage"`
 }
 
-func (j *CIFailedJob) UnmarshalJSON(data []byte) error {
-	type Alias CIFailedJob
+func (j *CIJobLog) UnmarshalJSON(data []byte) error {
+	type Alias CIJobLog
 	aux := &struct {
 		Log []byte `json:"log"`
 		*Alias
@@ -161,8 +183,8 @@ func CallHost(name string, params interface{}, result interface{}) error {
 		resOffset = host_search_code(mem.Offset())
 	case "fetch_web_content":
 		resOffset = host_fetch_web_content(mem.Offset())
-	case "get_ci_failed_jobs":
-		resOffset = host_get_ci_failed_jobs(mem.Offset())
+	case "get_ci_job_log":
+		resOffset = host_get_ci_job_log(mem.Offset())
 	default:
 		return fmt.Errorf("unknown host function: %s", name)
 	}
@@ -227,16 +249,16 @@ func FetchWebContent(url string) (string, error) {
 	return string(result.Content), nil
 }
 
-func GetCIFailedJobs() ([]CIFailedJob, error) {
-	var result CIFailedJobsResult
-	err := CallHost("get_ci_failed_jobs", map[string]string{}, &result)
+func GetCIJobLog(jobID int64) (*CIJobLog, error) {
+	var result GetCIJobLogResult
+	err := CallHost("get_ci_job_log", map[string]int64{"job_id": jobID}, &result)
 	if err != nil {
 		return nil, err
 	}
 	if result.Error != "" {
 		return nil, errors.New(result.Error)
 	}
-	return result.Jobs, nil
+	return result.Job, nil
 }
 
 //go:wasmimport extism:host/user get_git_file
@@ -248,8 +270,8 @@ func host_search_code(argsPtr uint64) uint64
 //go:wasmimport extism:host/user fetch_web_content
 func host_fetch_web_content(argsPtr uint64) uint64
 
-//go:wasmimport extism:host/user get_ci_failed_jobs
-func host_get_ci_failed_jobs(argsPtr uint64) uint64
+//go:wasmimport extism:host/user get_ci_job_log
+func host_get_ci_job_log(argsPtr uint64) uint64
 
 func ExtractStringArg(args map[string]interface{}, keys ...string) string {
 	if args == nil {
@@ -443,7 +465,31 @@ func BuildPrompt(input PluginInput, prompt string) (fullPrompt, defaultBranch st
 
 	mr := fmt.Sprintf("\nTitle: %s\nAuthor: %s\n%s", input.Title, input.Author, branchInfo)
 
-	fullPrompt = prompt + mr + description + "# Diff\n```\n" + string(input.Diffs) + "\n```\n"
+	ciInfo := ""
+	if input.CIInfo != nil {
+		ciInfo = fmt.Sprintf("\n# CI Pipeline Info\nPipeline Status: %s\n", input.CIInfo.PipelineStatus)
+		if len(input.CIInfo.FailedJobs) > 0 {
+			ciInfo += "Failed Jobs:\n"
+			for _, j := range input.CIInfo.FailedJobs {
+				ciInfo += fmt.Sprintf("  - %s (ID: %d, Stage: %s, AllowFailure: %v)\n", j.Name, j.ID, j.Stage, j.AllowFailure)
+			}
+		}
+		if len(input.CIInfo.FailedTests) > 0 {
+			ciInfo += "Failed Tests:\n"
+			for _, t := range input.CIInfo.FailedTests {
+				ciInfo += fmt.Sprintf("  - %s::%s", t.Suite, t.Name)
+				if t.File != "" {
+					ciInfo += fmt.Sprintf(" (%s)", t.File)
+				}
+				ciInfo += "\n"
+				if t.Output != "" {
+					ciInfo += fmt.Sprintf("    Output: %s\n", t.Output)
+				}
+			}
+		}
+	}
+
+	fullPrompt = prompt + mr + description + ciInfo + "# Diff\n```\n" + string(input.Diffs) + "\n```\n"
 	return fullPrompt, defaultBranch, nil
 }
 
@@ -517,11 +563,17 @@ func Tools() []ToolDef {
 			},
 		},
 		{
-			Name:        "get_ci_failed_jobs",
-			Description: "Fetch logs of failed CI/CD jobs for the current merge request. Returns each failed job's name, stage, ID, and recent log output (up to 200 lines). Use this to understand why CI pipelines are failing.",
+			Name:        "get_ci_job_log",
+			Description: "Fetch the log of a specific CI/CD job by its ID. Returns the job's name, stage, and recent log output (up to 200 lines). Use this to understand why a specific CI job failed. Job IDs are available in the CI pipeline info provided in the prompt.",
 			Parameters: ToolParameters{
-				Type:       "object",
-				Properties: map[string]ToolProperty{},
+				Type: "object",
+				Properties: map[string]ToolProperty{
+					"job_id": {
+						Type:        "integer",
+						Description: "The ID of the CI job to fetch the log for (from ci_info.failed_jobs).",
+					},
+				},
+				Required: []string{"job_id"},
 			},
 		},
 	}
@@ -571,21 +623,34 @@ func ExecuteTool(name string, args map[string]interface{}, defaultBranch string)
 		}
 		return map[string]interface{}{"content": content}
 
-	case "get_ci_failed_jobs":
-		jobs, err := GetCIFailedJobs()
+	case "get_ci_job_log":
+		jobIDVal, ok := args["job_id"]
+		if !ok {
+			return map[string]interface{}{"error": "job_id argument is missing"}
+		}
+		var jobID int64
+		switch v := jobIDVal.(type) {
+		case float64:
+			jobID = int64(v)
+		case int64:
+			jobID = v
+		case json.Number:
+			jobID, _ = v.Int64()
+		default:
+			return map[string]interface{}{"error": fmt.Sprintf("job_id must be an integer, got %T", jobIDVal)}
+		}
+		if jobID <= 0 {
+			return map[string]interface{}{"error": "job_id must be positive"}
+		}
+		jobLog, err := GetCIJobLog(jobID)
 		if err != nil {
-			return map[string]interface{}{"error": fmt.Sprintf("failed to get CI failed jobs: %s", err.Error())}
+			return map[string]interface{}{"error": fmt.Sprintf("failed to get CI job log: %s", err.Error())}
 		}
-		// Logs are unbounded and there may be several failed jobs, so share the
-		// tool-result budget between them rather than returning everything and
-		// risking a request over the API's size limit.
-		if len(jobs) > 0 {
-			perJob := MaxToolResultBytes / len(jobs)
-			for i := range jobs {
-				jobs[i].Log = Truncate(jobs[i].Log, perJob)
-			}
+		if jobLog == nil {
+			return map[string]interface{}{"error": "job log is empty"}
 		}
-		return map[string]interface{}{"jobs": jobs}
+		jobLog.Log = Truncate(jobLog.Log, MaxToolResultBytes)
+		return map[string]interface{}{"log": jobLog.Log, "job_id": jobLog.ID, "job_name": jobLog.Name, "stage": jobLog.Stage}
 
 	default:
 		return map[string]interface{}{"error": fmt.Sprintf("unknown tool: %s", name)}

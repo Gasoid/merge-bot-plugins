@@ -27,7 +27,7 @@ func TestTools(t *testing.T) {
 		names[tool.Name] = true
 	}
 
-	for _, name := range []string{"get_git_file", "search_code", "fetch_web_content", "get_ci_failed_jobs"} {
+	for _, name := range []string{"get_git_file", "search_code", "fetch_web_content", "get_ci_job_log"} {
 		if !names[name] {
 			t.Errorf("expected tool '%s' not found", name)
 		}
@@ -58,27 +58,30 @@ func TestGetGitFileToolParams(t *testing.T) {
 	}
 }
 
-// get_ci_failed_jobs takes no arguments. Anthropic needs an object schema with
-// an empty properties map here; Gemini instead needs the parameters block
-// omitted entirely, which is why the shared definition carries an empty map
-// rather than a nil one.
-func TestNoArgToolHasEmptyProperties(t *testing.T) {
+// get_ci_job_log requires a job_id argument.
+func TestCIJobLogToolParams(t *testing.T) {
 	var tool wire.Tool
 	for _, candidate := range tools() {
-		if candidate.Name == "get_ci_failed_jobs" {
+		if candidate.Name == "get_ci_job_log" {
 			tool = candidate
 			break
 		}
 	}
 
 	if tool.Name == "" {
-		t.Fatal("get_ci_failed_jobs not found")
+		t.Fatal("get_ci_job_log not found")
 	}
-	if tool.InputSchema.Properties == nil {
-		t.Error("properties should be an empty map, not nil")
+	if tool.InputSchema.Type != "object" {
+		t.Fatalf("expected input_schema type 'object', got '%s'", tool.InputSchema.Type)
 	}
-	if len(tool.InputSchema.Properties) != 0 {
-		t.Errorf("expected no properties, got %v", tool.InputSchema.Properties)
+	if _, ok := tool.InputSchema.Properties["job_id"]; !ok {
+		t.Error("expected 'job_id' property in input_schema")
+	}
+	if prop := tool.InputSchema.Properties["job_id"]; prop.Type != "integer" {
+		t.Errorf("expected job_id type 'integer', got '%s'", prop.Type)
+	}
+	if len(tool.InputSchema.Required) != 1 || tool.InputSchema.Required[0] != "job_id" {
+		t.Errorf("expected required ['job_id'], got %v", tool.InputSchema.Required)
 	}
 }
 

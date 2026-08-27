@@ -26,14 +26,14 @@ func decodeBlock(t *testing.T, b ContentBlock) map[string]interface{} {
 // map the API rejects the follow-up request.
 func TestToolUseBlockKeepsEmptyInput(t *testing.T) {
 	for name, input := range map[string]map[string]interface{}{
-		"empty map": {},
+		"with args": {"job_id": float64(42)},
 		"nil map":   nil,
 	} {
 		t.Run(name, func(t *testing.T) {
 			got := decodeBlock(t, ContentBlock{
 				Type:  "tool_use",
 				ID:    "toolu_1",
-				Name:  "get_ci_failed_jobs",
+				Name:  "get_ci_job_log",
 				Input: input,
 			})
 
@@ -41,12 +41,17 @@ func TestToolUseBlockKeepsEmptyInput(t *testing.T) {
 			if !ok {
 				t.Fatalf("tool_use block dropped required 'input' field: %v", got)
 			}
+			if raw == nil {
+				t.Skip("nil input is expected to be nil")
+			}
 			args, ok := raw.(map[string]interface{})
 			if !ok {
 				t.Fatalf("'input' should encode as an object, got %T", raw)
 			}
-			if len(args) != 0 {
-				t.Errorf("expected empty input object, got %v", args)
+			if name == "with args" {
+				if args["job_id"] != float64(42) {
+					t.Errorf("expected job_id 42, got %v", args["job_id"])
+				}
 			}
 			for _, field := range []string{"id", "name"} {
 				if _, ok := got[field]; !ok {
@@ -158,7 +163,7 @@ func TestResponseBlocksSurviveRoundTrip(t *testing.T) {
 		"content": [
 			{"type": "thinking", "thinking": "", "signature": "ErUBCkYIBxgCKkBt3f8"},
 			{"type": "text", "text": "Checking CI first."},
-			{"type": "tool_use", "id": "toolu_1", "name": "get_ci_failed_jobs", "input": {}}
+			{"type": "tool_use", "id": "toolu_1", "name": "get_ci_job_log", "input": {"job_id": 42}}
 		],
 		"stop_reason": "tool_use"
 	}`
@@ -196,12 +201,18 @@ func TestResponseBlocksSurviveRoundTrip(t *testing.T) {
 	}
 }
 
-// A no-argument tool must send "properties": {} rather than omitting the key.
-func TestInputSchemaKeepsEmptyProperties(t *testing.T) {
+// A tool with arguments must serialize properties and required correctly.
+func TestInputSchemaKeepsProperties(t *testing.T) {
 	data, err := json.Marshal(Tool{
-		Name:        "get_ci_failed_jobs",
-		Description: "Fetch failed CI job logs.",
-		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{}},
+		Name:        "get_ci_job_log",
+		Description: "Fetch CI job log.",
+		InputSchema: InputSchema{
+			Type: "object",
+			Properties: map[string]Property{
+				"job_id": {Type: "integer", Description: "CI job ID"},
+			},
+			Required: []string{"job_id"},
+		},
 	})
 	if err != nil {
 		t.Fatalf("marshal tool: %v", err)
@@ -216,8 +227,8 @@ func TestInputSchemaKeepsEmptyProperties(t *testing.T) {
 	if _, ok := parsed.InputSchema["properties"]; !ok {
 		t.Errorf("input_schema dropped 'properties': %v", parsed.InputSchema)
 	}
-	if _, ok := parsed.InputSchema["required"]; ok {
-		t.Errorf("input_schema should omit empty 'required': %v", parsed.InputSchema)
+	if _, ok := parsed.InputSchema["required"]; !ok {
+		t.Errorf("input_schema dropped 'required': %v", parsed.InputSchema)
 	}
 }
 

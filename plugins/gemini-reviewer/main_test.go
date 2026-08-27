@@ -20,7 +20,7 @@ func TestTools(t *testing.T) {
 		}
 	}
 
-	for _, name := range []string{"get_git_file", "search_code", "fetch_web_content", "get_ci_failed_jobs"} {
+	for _, name := range []string{"get_git_file", "search_code", "fetch_web_content", "get_ci_job_log"} {
 		if !names[name] {
 			t.Errorf("expected tool '%s' not found", name)
 		}
