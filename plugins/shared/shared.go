@@ -177,11 +177,14 @@ func ExtractStringArg(args map[string]interface{}, keys ...string) string {
 	return ""
 }
 
-// maxSafeJSONInt is 2^53, past which a JSON number cannot survive a float64
-// round trip. json.Unmarshal into an interface{} decodes every number as a
-// float64, so a value above this is already imprecise by the time it arrives
-// and is rejected rather than silently returned as the wrong ID.
-const maxSafeJSONInt = 1 << 53
+// maxSafeJSONInt is 2^53-1, the largest integer that survives a float64 round
+// trip. json.Unmarshal into an interface{} decodes every number as a float64,
+// so a value above this is already imprecise by the time it arrives and is
+// rejected rather than silently returned as the wrong ID. The bound excludes
+// 2^53 itself: that value is representable, but so is nothing between it and
+// 2^53+2, so 9007199254740993 decodes to 9007199254740992 and accepting it
+// would fetch a job the model never asked for.
+const maxSafeJSONInt = 1<<53 - 1
 
 // ExtractJobIDArg reads a job ID out of decoded tool arguments. Despite the
 // "integer" declared in the tool schema, models routinely send the value as a

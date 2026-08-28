@@ -48,6 +48,7 @@ func TestExtractJobIDArgRejects(t *testing.T) {
 		"bool":            {map[string]interface{}{"job_id": true}, "must be an integer"},
 		"fractional":      {map[string]interface{}{"job_id": float64(42.7)}, "must be a whole number"},
 		"beyond float64":  {map[string]interface{}{"job_id": float64(1 << 54)}, "out of range"},
+		"at 2^53":         {map[string]interface{}{"job_id": float64(1 << 53)}, "out of range"},
 		"zero":            {map[string]interface{}{"job_id": float64(0)}, "must be positive"},
 		"negative":        {map[string]interface{}{"job_id": float64(-1)}, "must be positive"},
 		"negative string": {map[string]interface{}{"job_id": "-7"}, "must be positive"},
@@ -69,6 +70,30 @@ func TestExtractJobIDArgRejects(t *testing.T) {
 				t.Errorf("message should name the canonical key, got %q", err.Error())
 			}
 		})
+	}
+}
+
+// The last ID a float64 can carry unambiguously must still be accepted — the
+// range guard exists to catch imprecision, not to shrink the usable ID space.
+// Paired with the "at 2^53" rejection above, this pins the bound from both
+// sides. A string job_id skips float64 entirely, so it keeps full int64 range.
+func TestExtractJobIDArgBoundary(t *testing.T) {
+	const lastSafe = 1<<53 - 1
+
+	got, err := ExtractJobIDArg(map[string]interface{}{"job_id": float64(lastSafe)}, "job_id")
+	if err != nil {
+		t.Fatalf("2^53-1 should be accepted: %v", err)
+	}
+	if got != lastSafe {
+		t.Errorf("expected %d, got %d", int64(lastSafe), got)
+	}
+
+	got, err = ExtractJobIDArg(map[string]interface{}{"job_id": "9007199254740993"}, "job_id")
+	if err != nil {
+		t.Fatalf("a string job_id above 2^53 should be accepted exactly: %v", err)
+	}
+	if got != 9007199254740993 {
+		t.Errorf("string path lost precision: got %d", got)
 	}
 }
 
