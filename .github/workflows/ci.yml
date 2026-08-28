@@ -28,9 +28,11 @@ jobs:
         id: go
 
       # Only packages that do not import github.com/extism/go-pdk can be built
-      # for the host, so these are the tests that actually execute.
+      # for the host, so these are the tests that actually execute. The shared
+      # package qualifies because its pdk-dependent half sits behind a wasip1
+      # build tag in host_wasip1.go.
       - name: Test
-        run: go test ./plugins/claude-reviewer/internal/...
+        run: go test ./plugins/claude-reviewer/internal/... ./plugins/shared/
 
       - name: Build plugins
         run: |

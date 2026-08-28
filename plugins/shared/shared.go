@@ -4,11 +4,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/extism/go-pdk"
 )
 
 const (
@@ -32,7 +31,7 @@ You have access to tools to gather additional context for a thorough review:
 - "get_git_file" — fetch the full content of any file from the repository.
 - "search_code" — search for code patterns across the repository, results are limited to 100.
 - "fetch_web_content" — fetch documentation or web resources (limited to approved domains and their subdomains: pkg.go.dev, docs.python.org, developer.mozilla.org, golang.org).
-- "get_ci_failed_jobs" — fetch logs of failed CI jobs for this merge request.
+- "get_ci_job_log" — fetch the log of a specific CI job by its ID. Take the ID from the "Failed Jobs" list in the "# CI Pipeline Info" section below; if that section is absent or lists no jobs, no job IDs exist and you must not call this tool.
 Use these tools only when necessary, and provide your complete review as soon as you have gathered sufficient information.
 
 ## Output format
@@ -78,6 +77,28 @@ type PluginInput struct {
 	TargetBranch string            `json:"target_branch"`
 	Diffs        []byte            `json:"diffs"`
 	Vars         map[string]string `json:"vars"`
+	CIInfo       *CIInfo           `json:"ci_info,omitempty"`
+}
+
+type CIInfo struct {
+	PipelineStatus string    `json:"pipeline_status"`
+	FailedJobs     []JobRef  `json:"failed_jobs,omitempty"`
+	FailedTests    []TestRef `json:"failed_tests,omitempty"`
+}
+
+type JobRef struct {
+	Name         string `json:"name"`
+	Stage        string `json:"stage"`
+	ID           int64  `json:"id"`
+	AllowFailure bool   `json:"allow_failure"`
+}
+
+type TestRef struct {
+	Name      string `json:"name"`
+	Suite     string `json:"test_suite"`
+	Output    string `json:"output,omitempty"`
+	File      string `json:"file,omitempty"`
+	ClassName string `json:"classname,omitempty"`
 }
 
 type PluginOutput struct {
@@ -117,20 +138,20 @@ type FetchWebContentResult struct {
 	Content []byte `json:"content"`
 }
 
-type CIFailedJobsResult struct {
+type GetCIJobLogResult struct {
 	HostResult
-	Jobs []CIFailedJob `json:"jobs"`
+	Job *CIJobLog `json:"job"`
 }
 
-type CIFailedJob struct {
+type CIJobLog struct {
 	Log   string `json:"log"`
 	ID    int64  `json:"job_id"`
 	Name  string `json:"job_name"`
 	Stage string `json:"stage"`
 }
 
-func (j *CIFailedJob) UnmarshalJSON(data []byte) error {
-	type Alias CIFailedJob
+func (j *CIJobLog) UnmarshalJSON(data []byte) error {
+	type Alias CIJobLog
 	aux := &struct {
 		Log []byte `json:"log"`
 		*Alias
@@ -144,113 +165,6 @@ func (j *CIFailedJob) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-func CallHost(name string, params interface{}, result interface{}) error {
-	paramsBytes, err := json.Marshal(params)
-	if err != nil {
-		return fmt.Errorf("failed to marshal params for %s: %w", name, err)
-	}
-
-	mem := pdk.AllocateBytes(paramsBytes)
-	defer mem.Free()
-
-	var resOffset uint64
-	switch name {
-	case "get_git_file":
-		resOffset = host_get_git_file(mem.Offset())
-	case "search_code":
-		resOffset = host_search_code(mem.Offset())
-	case "fetch_web_content":
-		resOffset = host_fetch_web_content(mem.Offset())
-	case "get_ci_failed_jobs":
-		resOffset = host_get_ci_failed_jobs(mem.Offset())
-	default:
-		return fmt.Errorf("unknown host function: %s", name)
-	}
-
-	if resOffset == 0 {
-		return errors.New("host function returned null")
-	}
-
-	resMem := pdk.FindMemory(resOffset)
-	if resMem.Length() == 0 {
-		return fmt.Errorf("host function %s returned empty result", name)
-	}
-
-	if err := json.Unmarshal(resMem.ReadBytes(), result); err != nil {
-		return fmt.Errorf("failed to unmarshal result from %s: %w", name, err)
-	}
-
-	return nil
-}
-
-func GetGitFile(branch, filePath string) ([]byte, error) {
-	var result GetGitFileResult
-	err := CallHost("get_git_file", map[string]string{
-		"branch":    branch,
-		"file_path": filePath,
-	}, &result)
-	if err != nil {
-		return nil, err
-	}
-	if result.Error != "" {
-		return nil, errors.New(result.Error)
-	}
-	return result.Data, nil
-}
-
-func SearchCode(branch, query string) ([]SearchResult, error) {
-	var result SearchCodeResult
-	err := CallHost("search_code", map[string]string{
-		"branch": branch,
-		"query":  query,
-	}, &result)
-	if err != nil {
-		return nil, err
-	}
-	if result.Error != "" {
-		return nil, errors.New(result.Error)
-	}
-	return result.Results, nil
-}
-
-func FetchWebContent(url string) (string, error) {
-	var result FetchWebContentResult
-	err := CallHost("fetch_web_content", map[string]string{
-		"url": url,
-	}, &result)
-	if err != nil {
-		return "", err
-	}
-	if result.Error != "" {
-		return "", errors.New(result.Error)
-	}
-	return string(result.Content), nil
-}
-
-func GetCIFailedJobs() ([]CIFailedJob, error) {
-	var result CIFailedJobsResult
-	err := CallHost("get_ci_failed_jobs", map[string]string{}, &result)
-	if err != nil {
-		return nil, err
-	}
-	if result.Error != "" {
-		return nil, errors.New(result.Error)
-	}
-	return result.Jobs, nil
-}
-
-//go:wasmimport extism:host/user get_git_file
-func host_get_git_file(argsPtr uint64) uint64
-
-//go:wasmimport extism:host/user search_code
-func host_search_code(argsPtr uint64) uint64
-
-//go:wasmimport extism:host/user fetch_web_content
-func host_fetch_web_content(argsPtr uint64) uint64
-
-//go:wasmimport extism:host/user get_ci_failed_jobs
-func host_get_ci_failed_jobs(argsPtr uint64) uint64
-
 func ExtractStringArg(args map[string]interface{}, keys ...string) string {
 	if args == nil {
 		return ""
@@ -261,6 +175,72 @@ func ExtractStringArg(args map[string]interface{}, keys ...string) string {
 		}
 	}
 	return ""
+}
+
+// maxSafeJSONInt is 2^53-1, the largest integer that survives a float64 round
+// trip. json.Unmarshal into an interface{} decodes every number as a float64,
+// so a value above this is already imprecise by the time it arrives and is
+// rejected rather than silently returned as the wrong ID. The bound excludes
+// 2^53 itself: that value is representable, but so is nothing between it and
+// 2^53+2, so 9007199254740993 decodes to 9007199254740992 and accepting it
+// would fetch a job the model never asked for.
+const maxSafeJSONInt = 1<<53 - 1
+
+// ExtractJobIDArg reads a job ID out of decoded tool arguments. Despite the
+// "integer" declared in the tool schema, models routinely send the value as a
+// JSON string and vary the key casing, and each mismatch costs an agent turn
+// that ends with a review that never saw the log it asked for. Keys are tried
+// in order, matching ExtractStringArg.
+func ExtractJobIDArg(args map[string]interface{}, keys ...string) (int64, error) {
+	var raw interface{}
+	found := false
+	for _, key := range keys {
+		if v, ok := args[key]; ok && v != nil {
+			raw, found = v, true
+			break
+		}
+	}
+	if !found {
+		return 0, fmt.Errorf("%s argument is missing", keys[0])
+	}
+
+	var jobID int64
+	switch v := raw.(type) {
+	case float64:
+		// Two distinct problems, and the model can only act on the right one:
+		// a fractional value is a formatting mistake worth resending, an
+		// out-of-range one means the ID itself is wrong.
+		if v != math.Trunc(v) {
+			return 0, fmt.Errorf("%s must be a whole number, got %v", keys[0], v)
+		}
+		if v < -maxSafeJSONInt || v > maxSafeJSONInt {
+			return 0, fmt.Errorf("%s is out of range for a job ID, got %v", keys[0], v)
+		}
+		jobID = int64(v)
+	case int:
+		jobID = int64(v)
+	case int64:
+		jobID = v
+	case json.Number:
+		parsed, err := v.Int64()
+		if err != nil {
+			return 0, fmt.Errorf("%s must be an integer, got %q", keys[0], v.String())
+		}
+		jobID = parsed
+	case string:
+		parsed, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
+		if err != nil {
+			return 0, fmt.Errorf("%s must be an integer, got %q", keys[0], v)
+		}
+		jobID = parsed
+	default:
+		return 0, fmt.Errorf("%s must be an integer, got %T", keys[0], raw)
+	}
+
+	if jobID <= 0 {
+		return 0, fmt.Errorf("%s must be positive, got %d", keys[0], jobID)
+	}
+	return jobID, nil
 }
 
 func Truncate(s string, maxBytes int) string {
@@ -307,92 +287,6 @@ func CountLines(data string) int {
 		return 0
 	}
 	return strings.Count(strings.TrimRight(data, "\n"), "\n") + 1
-}
-
-func ValidateThreads(threads []Thread, sourceBranch, targetBranch string) []Thread {
-	type fileKey struct {
-		branch, path string
-	}
-	fileLines := map[fileKey]int{}
-	valid := make([]Thread, 0, len(threads))
-	for _, t := range threads {
-		if t.NewLine > 0 && t.NewPath == "" {
-			continue
-		}
-		if t.OldLine > 0 && t.OldPath == "" {
-			continue
-		}
-		if t.NewLine > 0 && t.NewPath != "" {
-			key := fileKey{sourceBranch, t.NewPath}
-			lineCount, ok := fileLines[key]
-			if !ok {
-				data, err := GetGitFile(sourceBranch, t.NewPath)
-				if err != nil {
-					fileLines[key] = -1
-				} else {
-					fileLines[key] = CountLines(string(data))
-					lineCount = fileLines[key]
-				}
-			}
-			if lineCount < 0 || int(t.NewLine) > lineCount {
-				continue
-			}
-		}
-		if t.OldLine > 0 && t.OldPath != "" {
-			branch := targetBranch
-			if branch == "" {
-				branch = sourceBranch
-			}
-			key := fileKey{branch, t.OldPath}
-			lineCount, ok := fileLines[key]
-			if !ok {
-				data, err := GetGitFile(branch, t.OldPath)
-				if err != nil {
-					fileLines[key] = -1
-				} else {
-					fileLines[key] = CountLines(string(data))
-					lineCount = fileLines[key]
-				}
-			}
-			if lineCount < 0 || int(t.OldLine) > lineCount {
-				continue
-			}
-		}
-		valid = append(valid, t)
-	}
-	return valid
-}
-
-func SendHTTPRequestWithRetry(url string, headers map[string]string, body []byte, maxRetries int) (pdk.HTTPResponse, error) {
-	var resp pdk.HTTPResponse
-	backoff := DefaultInitialBackoff
-
-	for attempt := 0; attempt <= maxRetries; attempt++ {
-		req := pdk.NewHTTPRequest(pdk.MethodPost, url)
-		req.SetHeader("Content-Type", "application/json")
-		for k, v := range headers {
-			req.SetHeader(k, v)
-		}
-		req.SetBody(body)
-
-		resp = req.Send()
-		status := resp.Status()
-
-		if status >= 200 && status < 300 {
-			return resp, nil
-		}
-
-		isRetriable := status == 429 || status == 500 || status == 502 || status == 503 || status == 504
-		if isRetriable && attempt < maxRetries {
-			time.Sleep(backoff)
-			backoff *= 2
-			continue
-		}
-
-		return resp, fmt.Errorf("request failed with status %d: %s", status, string(resp.Body()))
-	}
-
-	return resp, errors.New("request failed: max retries exceeded")
 }
 
 // ParseIntVarRange is ParseIntVar with an upper bound, for values that drive a
@@ -443,7 +337,35 @@ func BuildPrompt(input PluginInput, prompt string) (fullPrompt, defaultBranch st
 
 	mr := fmt.Sprintf("\nTitle: %s\nAuthor: %s\n%s", input.Title, input.Author, branchInfo)
 
-	fullPrompt = prompt + mr + description + "# Diff\n```\n" + string(input.Diffs) + "\n```\n"
+	ciInfo := ""
+	if input.CIInfo != nil {
+		ciInfo = fmt.Sprintf("\n# CI Pipeline Info\nPipeline Status: %s\n", input.CIInfo.PipelineStatus)
+		if len(input.CIInfo.FailedJobs) > 0 {
+			ciInfo += "Failed Jobs:\n"
+			for _, j := range input.CIInfo.FailedJobs {
+				ciInfo += fmt.Sprintf("  - %s (ID: %d, Stage: %s, AllowFailure: %v)\n", j.Name, j.ID, j.Stage, j.AllowFailure)
+			}
+		}
+		if len(input.CIInfo.FailedTests) > 0 {
+			ciInfo += "Failed Tests:\n"
+			for _, t := range input.CIInfo.FailedTests {
+				ciInfo += fmt.Sprintf("  - %s::%s", t.Suite, t.Name)
+				// GitLab JUnit reports often leave "file" empty, and then
+				// classname is the only thing that locates the test.
+				if loc := t.File; loc != "" {
+					ciInfo += fmt.Sprintf(" (%s)", loc)
+				} else if t.ClassName != "" {
+					ciInfo += fmt.Sprintf(" (%s)", t.ClassName)
+				}
+				ciInfo += "\n"
+				if t.Output != "" {
+					ciInfo += fmt.Sprintf("    Output: %s\n", t.Output)
+				}
+			}
+		}
+	}
+
+	fullPrompt = prompt + mr + description + ciInfo + "# Diff\n```\n" + string(input.Diffs) + "\n```\n"
 	return fullPrompt, defaultBranch, nil
 }
 
@@ -517,77 +439,18 @@ func Tools() []ToolDef {
 			},
 		},
 		{
-			Name:        "get_ci_failed_jobs",
-			Description: "Fetch logs of failed CI/CD jobs for the current merge request. Returns each failed job's name, stage, ID, and recent log output (up to 200 lines). Use this to understand why CI pipelines are failing.",
+			Name:        "get_ci_job_log",
+			Description: "Fetch the log of a specific CI/CD job by its ID. Returns the job's name, stage, and recent log output (up to 200 lines). Use this to understand why a specific CI job failed. Valid job IDs are the ones listed under 'Failed Jobs' in the '# CI Pipeline Info' section of the prompt; do not call this tool if the prompt has no such section, and never guess an ID.",
 			Parameters: ToolParameters{
-				Type:       "object",
-				Properties: map[string]ToolProperty{},
+				Type: "object",
+				Properties: map[string]ToolProperty{
+					"job_id": {
+						Type:        "integer",
+						Description: "The ID of the CI job to fetch the log for, copied from the 'Failed Jobs' list in the '# CI Pipeline Info' section of the prompt.",
+					},
+				},
+				Required: []string{"job_id"},
 			},
 		},
-	}
-}
-
-func ExecuteTool(name string, args map[string]interface{}, defaultBranch string) map[string]interface{} {
-	switch name {
-	case "get_git_file":
-		filePath := ExtractStringArg(args, "file_path", "filePath", "path")
-		if filePath == "" {
-			return map[string]interface{}{"error": "file_path argument is missing"}
-		}
-		branch := ExtractStringArg(args, "branch", "ref")
-		if branch == "" {
-			branch = defaultBranch
-		}
-		fileData, err := GetGitFile(branch, filePath)
-		if err != nil {
-			return map[string]interface{}{"error": fmt.Sprintf("failed to get file %s on branch %s: %s", filePath, branch, err.Error())}
-		}
-		content := Truncate(string(fileData), MaxToolResultBytes)
-		return map[string]interface{}{"content": content}
-
-	case "search_code":
-		query := ExtractStringArg(args, "query", "q")
-		if query == "" {
-			return map[string]interface{}{"error": "query argument is missing"}
-		}
-		branch := ExtractStringArg(args, "branch", "ref")
-		if branch == "" {
-			branch = defaultBranch
-		}
-		results, err := SearchCode(branch, query)
-		if err != nil {
-			return map[string]interface{}{"error": fmt.Sprintf("failed to search code: %s", err.Error())}
-		}
-		return map[string]interface{}{"results": results}
-
-	case "fetch_web_content":
-		url := ExtractStringArg(args, "url", "link")
-		if url == "" {
-			return map[string]interface{}{"error": "url argument is missing"}
-		}
-		content, err := FetchWebContent(url)
-		if err != nil {
-			return map[string]interface{}{"error": fmt.Sprintf("failed to fetch web content: %s", err.Error())}
-		}
-		return map[string]interface{}{"content": content}
-
-	case "get_ci_failed_jobs":
-		jobs, err := GetCIFailedJobs()
-		if err != nil {
-			return map[string]interface{}{"error": fmt.Sprintf("failed to get CI failed jobs: %s", err.Error())}
-		}
-		// Logs are unbounded and there may be several failed jobs, so share the
-		// tool-result budget between them rather than returning everything and
-		// risking a request over the API's size limit.
-		if len(jobs) > 0 {
-			perJob := MaxToolResultBytes / len(jobs)
-			for i := range jobs {
-				jobs[i].Log = Truncate(jobs[i].Log, perJob)
-			}
-		}
-		return map[string]interface{}{"jobs": jobs}
-
-	default:
-		return map[string]interface{}{"error": fmt.Sprintf("unknown tool: %s", name)}
 	}
 }

@@ -9,7 +9,7 @@ The OpenAI Reviewer is a WebAssembly (WASM) plugin that integrates with the merg
 ## Features
 
 -   **Automated Code Reviews**: Analyzes diffs in merge requests and provides comprehensive feedback with inline thread comments.
--   **Autonomous Agent Loop & Tool Calling**: OpenAI can call the host functions `get_git_file` (full file content), `search_code` (repository search, up to 100 results), `fetch_web_content` (documentation from approved domains), and `get_ci_failed_jobs` (failed CI job logs) when it needs more context than the diff.
+-   **Autonomous Agent Loop & Tool Calling**: OpenAI can call the host functions `get_git_file` (full file content), `search_code` (repository search, up to 100 results), `fetch_web_content` (documentation from approved domains), and `get_ci_job_log` (fetch CI job log by ID) when it needs more context than the diff.
 
 > **Note for reasoning models** (e.g. `gpt-5.x` variants): the `chat/completions` endpoint rejects function tools when `reasoning_effort` is set. The plugin therefore defaults `reasoning_effort` to `none` on tool-calling turns (override with `reviewer_reasoning_effort`).
 -   **Configurable**: The plugin can be configured with different models, prompts, endpoints, and agent turn limits.
