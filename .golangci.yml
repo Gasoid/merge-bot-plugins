@@ -2,4 +2,4 @@ version: "2"
 
 run:
   build-tags:
-    - wasm
+    - wasip1
