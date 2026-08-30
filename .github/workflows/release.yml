@@ -33,6 +33,9 @@ jobs:
 
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          fetch-tags: true
 
       - name: Set up Go 1.x
         uses: actions/setup-go@v6
